@@ -1,0 +1,2098 @@
+--[[
+    Xinnz COPY MOBILE v1.2 — FINAL
+    ✅ Perbaikan USSI download dengan error handling
+    ✅ Rich Webhook (field Compressed, Ratio, Saved Inst)
+    ✅ Discord Command Bridge (kontrol dari file)
+    ✅ Export/Import Preset
+    ✅ Tidak ada error "call a nil value"
+]]
+
+local doCopy
+local isCopying        = false
+local schedulerRunning = false
+
+local function getService(name)
+    local ok, s = pcall(function() return game:GetService(name) end)
+    return ok and s or nil
+end
+
+local Players          = getService("Players")
+local HttpService      = getService("HttpService")
+local UserInputService = getService("UserInputService")
+local TweenService     = getService("TweenService")
+local RunService       = getService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui", 10)
+
+local DATA = "XinnzData"
+pcall(function() if not isfolder(DATA)             then makefolder(DATA)             end end)
+pcall(function() if not isfolder(DATA.."/history") then makefolder(DATA.."/history") end end)
+pcall(function() if not isfolder(DATA.."/errors")  then makefolder(DATA.."/errors")  end end)
+pcall(function() if not isfolder(DATA.."/saves")   then makefolder(DATA.."/saves")   end end)
+
+local UPLOAD_SERVICES = {"catbox.moe", "litterbox", "filebin"}
+
+local THEME_DATA = {
+    Cyan  = {BG=Color3.fromRGB(18,18,26),  BG2=Color3.fromRGB(28,28,40),  BG3=Color3.fromRGB(42,42,58),  ACCENT=Color3.fromRGB(0,200,255)  },
+    Ocean = {BG=Color3.fromRGB(10,18,30),  BG2=Color3.fromRGB(15,28,48),  BG3=Color3.fromRGB(25,42,70),  ACCENT=Color3.fromRGB(60,160,255) },
+    Red   = {BG=Color3.fromRGB(22,10,10),  BG2=Color3.fromRGB(34,15,15),  BG3=Color3.fromRGB(50,24,24),  ACCENT=Color3.fromRGB(255,70,70)  },
+}
+
+local CFG = {
+    SaveFolder         = DATA.."/saves",
+    RetryAttempts      = 3,
+    OutputFormat       = "RBXLX",
+    AutoOrganize       = true,
+    DupCheck           = true,
+    ExcludeList        = {},
+    Theme              = "Cyan",
+    BackupEnabled      = false,
+    BackupInterval     = 10,
+    FilenameTemplate   = "{gameName}_{date}_{time}",
+    WebhookURL         = "",
+    WebhookEnabled     = false,
+    WebhookAvatar      = "",
+    ChatCommandEnabled = true,
+    PlayerTrigger      = false,
+    PlayerTriggerCount = 3,
+    PlayerTriggerMode  = "noscript",
+    AutoUpload         = false,
+    UploadService      = "catbox.moe",
+    GuiW               = 340,
+    GuiH               = 530,
+    -- Discord Command Bridge
+    DiscordCmdEnabled  = false,
+    DiscordCmdFile     = DATA.."/discord_cmd.txt",
+    DiscordRespFile    = DATA.."/discord_resp.txt",
+}
+
+local function loadCFG()
+    pcall(function()
+        local f = DATA.."/settings.json"
+        if isfile(f) then
+            local d = HttpService:JSONDecode(readfile(f))
+            CFG.SaveFolder         = d.SaveFolder         or DATA.."/saves"
+            CFG.RetryAttempts      = d.RetryAttempts      or 3
+            CFG.OutputFormat       = d.OutputFormat       or "RBXLX"
+            CFG.AutoOrganize       = d.AutoOrganize       ~= false
+            CFG.DupCheck           = d.DupCheck           ~= false
+            CFG.ExcludeList        = d.ExcludeList        or {}
+            CFG.Theme              = d.Theme              or "Cyan"
+            CFG.BackupEnabled      = d.BackupEnabled      or false
+            CFG.BackupInterval     = d.BackupInterval     or 10
+            CFG.FilenameTemplate   = d.FilenameTemplate   or "{gameName}_{date}_{time}"
+            CFG.WebhookURL         = d.WebhookURL         or ""
+            CFG.WebhookEnabled     = d.WebhookEnabled     or false
+            CFG.WebhookAvatar      = d.WebhookAvatar      or ""
+            CFG.ChatCommandEnabled = d.ChatCommandEnabled ~= false
+            CFG.PlayerTrigger      = d.PlayerTrigger      or false
+            CFG.PlayerTriggerCount = d.PlayerTriggerCount or 3
+            CFG.PlayerTriggerMode  = d.PlayerTriggerMode  or "noscript"
+            CFG.AutoUpload         = d.AutoUpload         or false
+            CFG.UploadService      = d.UploadService      or "catbox.moe"
+            CFG.DiscordCmdEnabled  = d.DiscordCmdEnabled  or false
+            CFG.DiscordCmdFile     = d.DiscordCmdFile     or DATA.."/discord_cmd.txt"
+            CFG.DiscordRespFile    = d.DiscordRespFile    or DATA.."/discord_resp.txt"
+            if d.GuiSize then
+                CFG.GuiW = d.GuiSize.Width  or 340
+                CFG.GuiH = d.GuiSize.Height or 530
+            end
+        end
+    end)
+end
+
+local function saveCFG()
+    pcall(function()
+        CFG.GuiSize = {Width=CFG.GuiW, Height=CFG.GuiH}
+        writefile(DATA.."/settings.json", HttpService:JSONEncode(CFG))
+    end)
+end
+
+loadCFG()
+
+local T      = THEME_DATA[CFG.Theme] or THEME_DATA.Cyan
+local BG     = T.BG
+local BG2    = T.BG2
+local BG3    = T.BG3
+local ACCENT = T.ACCENT
+
+local GREEN  = Color3.fromRGB(0,   200, 120)
+local YELLOW = Color3.fromRGB(255, 200, 0)
+local RED    = Color3.fromRGB(220, 60,  60)
+local WHITE  = Color3.fromRGB(220, 220, 220)
+local DIM    = Color3.fromRGB(130, 130, 150)
+local BLUE   = Color3.fromRGB(40,  130, 210)
+local PURPLE = Color3.fromRGB(110, 60,  200)
+local ORANGE = Color3.fromRGB(255, 140, 0)
+local TEAL   = Color3.fromRGB(0,   180, 160)
+
+-- =====================================================
+-- SOUNDS
+-- =====================================================
+local function playSound(pitch)
+    pcall(function()
+        local s = Instance.new("Sound")
+        s.SoundId = "rbxassetid://9119713951"
+        s.Volume  = 0.5; s.Pitch = pitch or 1
+        s.Parent  = game:GetService("SoundService"); s:Play()
+        task.delay(2, function() pcall(function() s:Destroy() end) end)
+    end)
+end
+
+-- =====================================================
+-- HISTORY / STATS / ERROR
+-- =====================================================
+local function loadHistory()
+    local ok, r = pcall(function()
+        local f = DATA.."/history/index.json"
+        if isfile(f) then return HttpService:JSONDecode(readfile(f)) end
+        return {}
+    end)
+    return (ok and r) or {}
+end
+local function saveHistory(h)
+    pcall(function() writefile(DATA.."/history/index.json", HttpService:JSONEncode(h)) end)
+end
+local function pushHistory(entry)
+    local h = loadHistory()
+    table.insert(h, 1, entry)
+    if #h > 30 then table.remove(h, #h) end
+    saveHistory(h)
+end
+local function loadStats()
+    local ok, r = pcall(function()
+        local f = DATA.."/stats.json"
+        if isfile(f) then return HttpService:JSONDecode(readfile(f)) end
+        return {success=0, fail=0, totalBytes=0}
+    end)
+    return (ok and r) or {success=0, fail=0, totalBytes=0}
+end
+local function saveStats(s)
+    pcall(function() writefile(DATA.."/stats.json", HttpService:JSONEncode(s)) end)
+end
+local function addStat(success, bytes)
+    local s = loadStats()
+    if success then s.success=(s.success or 0)+1
+    else             s.fail  =(s.fail    or 0)+1 end
+    s.totalBytes=(s.totalBytes or 0)+(bytes or 0)
+    saveStats(s); return s
+end
+local function logError(ctx, err)
+    pcall(function()
+        local dir=DATA.."/errors"; if not isfolder(dir) then makefolder(dir) end
+        writefile(dir.."/err_"..tostring(os.time())..".txt",
+            "Time:"..tostring(os.time()).."\nCtx:"..tostring(ctx)..
+            "\nErr:"..tostring(err).."\nGame:"..tostring(game.Name)..
+            "\nPlace:"..tostring(game.PlaceId))
+    end)
+end
+
+-- =====================================================
+-- UTILS
+-- =====================================================
+local _realGameName = nil
+local function getRealGameName()
+    if _realGameName then return _realGameName end
+    local ok, info = pcall(function()
+        return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId, Enum.InfoType.Asset)
+    end)
+    _realGameName = (ok and info and info.Name and info.Name~="" and info.Name)
+        or "Place_"..tostring(game.PlaceId)
+    return _realGameName
+end
+local function cleanName()
+    local n = getRealGameName():gsub("[^%w_%-]","_")
+    return (n=="" and "Unknown") or n
+end
+local function fmtTime(s)
+    s=math.floor(s or 0)
+    if s<60 then return s.."s" end
+    return math.floor(s/60).."m "..(s%60).."s"
+end
+local function fmtBytes(b)
+    b=b or 0
+    if b<1024        then return b.."B"
+    elseif b<1048576 then return string.format("%.2fKB",b/1024)
+    else                  return string.format("%.2fMB",b/1048576) end
+end
+local function fmtMB(b) return string.format("%.2f MB",(b or 0)/1048576) end
+local function countInst()
+    local n=0
+    pcall(function() for _ in pairs(game:GetDescendants()) do n=n+1 end end)
+    return n
+end
+local function countScripts()
+    local total,l_,m_,s_=0,0,0,0
+    pcall(function()
+        for _,v in ipairs(game:GetDescendants()) do
+            local ok2,cls=pcall(function() return v.ClassName end)
+            if ok2 then
+                if     cls=="LocalScript"  then l_=l_+1;  total=total+1
+                elseif cls=="ModuleScript" then m_=m_+1;  total=total+1
+                elseif cls=="Script"       then s_=s_+1;  total=total+1
+                end
+            end
+        end
+    end)
+    return total,l_,m_,s_
+end
+local function safeDate()
+    local ok,r=pcall(function() return os.date("%d/%m/%y %H:%M") end)
+    return (ok and r) or tostring(os.time())
+end
+local function applyTemplate(tmpl)
+    local ts=tostring(os.time())
+    local dS,tS
+    pcall(function() dS=os.date("%Y%m%d") end)
+    pcall(function() tS=os.date("%H%M%S") end)
+    dS=dS or ts; tS=tS or ts
+    local result=(tmpl or "{gameName}_{date}_{time}")
+        :gsub("{gameName}",cleanName())
+        :gsub("{placeId}", tostring(game.PlaceId))
+        :gsub("{gameId}",  tostring(game.GameId))
+        :gsub("{date}",    dS)
+        :gsub("{time}",    tS)
+    local extMap={RBXL=".rbxl",RBXLX=".rbxlx",RBXM=".rbxm"}
+    local ext=extMap[CFG.OutputFormat] or ".rbxlx"
+    if not result:match("%.[a-zA-Z]+$") then result=result..ext end
+    return result
+end
+local function httpReq(options)
+    local fn=nil
+    pcall(function() if syn and syn.request     then fn=syn.request   end end)
+    pcall(function() if not fn and http_request then fn=http_request  end end)
+    pcall(function() if not fn and request      then fn=request       end end)
+    if not fn then return false,"No HTTP function" end
+    return pcall(fn,options)
+end
+local function getRespBody(resp)
+    local body=""
+    pcall(function()
+        body=type(resp)=="table"
+            and tostring(resp.Body or resp.body or "")
+            or  tostring(resp or "")
+    end)
+    return body
+end
+local function isHTMLResp(body)
+    local low=body:lower():gsub("^%s+","")
+    return low:match("^<!doctype")~=nil or low:match("^<html")~=nil or body:match("<title>")~=nil
+end
+
+-- =====================================================
+-- GUI CLEANUP
+-- =====================================================
+pcall(function()
+    if PlayerGui:FindFirstChild("XinnzMobile") then PlayerGui.XinnzMobile:Destroy() end
+end)
+pcall(function()
+    local cg=game:GetService("CoreGui")
+    if cg:FindFirstChild("XinnzMobile") then cg.XinnzMobile:Destroy() end
+end)
+
+local sg=Instance.new("ScreenGui")
+sg.Name="XinnzMobile"; sg.ResetOnSpawn=false
+sg.DisplayOrder=9999; sg.IgnoreGuiInset=true
+local pOk=pcall(function() sg.Parent=PlayerGui end)
+if not pOk then pcall(function() sg.Parent=game:GetService("CoreGui") end) end
+
+-- =====================================================
+-- GUI HELPERS
+-- =====================================================
+local function corner(p,px)
+    local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,px or 8); c.Parent=p; return c
+end
+local function frame(p,sz,pos,col,tr)
+    local f=Instance.new("Frame")
+    f.Size=sz; f.Position=pos or UDim2.new(0,0,0,0)
+    f.BackgroundColor3=col or BG2; f.BackgroundTransparency=tr or 0
+    f.BorderSizePixel=0; f.Parent=p; corner(f,8); return f
+end
+local function lbl(p,txt,sz,pos,tsz,col,font,align)
+    local l=Instance.new("TextLabel")
+    l.Size=sz; l.Position=pos or UDim2.new(0,0,0,0)
+    l.BackgroundTransparency=1; l.Text=txt
+    l.TextSize=tsz or 13; l.TextColor3=col or WHITE
+    l.Font=font or Enum.Font.Gotham
+    l.TextXAlignment=align or Enum.TextXAlignment.Left
+    l.TextWrapped=true; l.BorderSizePixel=0; l.Parent=p; return l
+end
+local function btn(p,txt,sz,pos,col,tsz)
+    local b=Instance.new("TextButton")
+    b.Size=sz; b.Position=pos or UDim2.new(0,0,0,0)
+    b.BackgroundColor3=col or BLUE; b.Text=txt
+    b.TextColor3=Color3.new(1,1,1); b.TextSize=tsz or 13
+    b.Font=Enum.Font.GothamBold; b.AutoButtonColor=true
+    b.BorderSizePixel=0; b.TextWrapped=true; b.Parent=p; corner(b,8); return b
+end
+local function tbx(p,ph,cur,sz,pos)
+    local bg=frame(p,sz,pos,BG3)
+    local tb=Instance.new("TextBox")
+    tb.Size=UDim2.new(1,-12,1,-8); tb.Position=UDim2.new(0,6,0,4)
+    tb.BackgroundTransparency=1; tb.Text=cur or ""
+    tb.PlaceholderText=ph or ""; tb.PlaceholderColor3=DIM
+    tb.TextColor3=WHITE; tb.TextSize=12; tb.Font=Enum.Font.Gotham
+    tb.TextXAlignment=Enum.TextXAlignment.Left
+    tb.ClearTextOnFocus=false; tb.BorderSizePixel=0; tb.Parent=bg
+    return tb,bg
+end
+local function sf(p,sz,pos)
+    local s=Instance.new("ScrollingFrame")
+    s.Size=sz; s.Position=pos or UDim2.new(0,0,0,0)
+    s.BackgroundTransparency=1; s.ScrollBarThickness=4
+    s.ScrollBarImageColor3=ACCENT; s.BorderSizePixel=0
+    s.CanvasSize=UDim2.new(0,0,0,0); s.Parent=p; return s
+end
+local function llayout(p,pad)
+    local ll=Instance.new("UIListLayout")
+    ll.Padding=UDim.new(0,pad or 6); ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Parent=p
+    ll:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        if p:IsA("ScrollingFrame") then p.CanvasSize=UDim2.new(0,0,0,ll.AbsoluteContentSize.Y+16) end
+    end)
+    return ll
+end
+local function pad(p,px)
+    local u=UDim.new(0,px or 6)
+    local pp=Instance.new("UIPadding")
+    pp.PaddingLeft=u; pp.PaddingRight=u; pp.PaddingTop=u; pp.PaddingBottom=u; pp.Parent=p
+end
+
+local toastQ = {}
+local function showToast(msg,col,dur)
+    pcall(function()
+        local t=Instance.new("Frame")
+        t.Size=UDim2.new(0,290,0,44); t.Position=UDim2.new(0.5,-145,0,-56)
+        t.BackgroundColor3=col or GREEN; t.BorderSizePixel=0; t.ZIndex=20; t.Parent=sg; corner(t,12)
+        local tl=Instance.new("TextLabel")
+        tl.Size=UDim2.new(1,-16,1,0); tl.Position=UDim2.new(0,8,0,0)
+        tl.BackgroundTransparency=1; tl.Text=msg; tl.TextColor3=Color3.new(1,1,1)
+        tl.TextSize=11; tl.Font=Enum.Font.GothamBold; tl.TextWrapped=true
+        tl.BorderSizePixel=0; tl.ZIndex=21; tl.Parent=t
+        TweenService:Create(t,TweenInfo.new(0.3,Enum.EasingStyle.Back),{Position=UDim2.new(0.5,-145,0,14)}):Play()
+        task.delay(dur or 2.5,function()
+            pcall(function()
+                TweenService:Create(t,TweenInfo.new(0.25),{Position=UDim2.new(0.5,-145,0,-56)}):Play()
+                task.delay(0.3,function() pcall(function() t:Destroy() end) end)
+            end)
+        end)
+    end)
+end
+
+-- =====================================================
+-- MAIN FRAME
+-- =====================================================
+local mf = frame(sg,UDim2.new(0,CFG.GuiW,0,CFG.GuiH),
+    UDim2.new(0.5,-CFG.GuiW/2,0.5,-CFG.GuiH/2),BG)
+corner(mf,14)
+
+local floatB=btn(sg,"⚡",UDim2.new(0,52,0,52),UDim2.new(1,-62,1,-72),ACCENT,24)
+floatB.TextColor3=Color3.new(0,0,0); floatB.Visible=false; corner(floatB,26)
+
+-- All main layout elements declared here so updateLayout can reference them
+local hdr    = frame(mf,UDim2.new(1,0,0,44),UDim2.new(0,0,0,0),BG2); corner(hdr,14)
+local tabBar = frame(mf,UDim2.new(1,-16,0,30),UDim2.new(0,8,0,50),BG2)
+local ca     = frame(mf,UDim2.new(1,-16,0,388),UDim2.new(0,8,0,86),BG,1)
+local progBg = frame(mf,UDim2.new(1,-16,0,5),UDim2.new(0,8,0,474),BG3)
+local statBar= frame(mf,UDim2.new(1,-16,0,28),UDim2.new(0,8,0,480),BG2)
+
+local function updateLayout()
+    local w=mf.AbsoluteSize.X; local h=mf.AbsoluteSize.Y
+    if w==0 or h==0 then return end
+    local hH=44; local tH=30; local pH=5; local sH=28
+    local cH=math.max(200, h - hH - tH - pH - sH - 24)
+    hdr.Size=UDim2.new(1,0,0,hH)
+    tabBar.Position=UDim2.new(0,8,0,hH+8)
+    tabBar.Size=UDim2.new(1,-16,0,tH)
+    ca.Position=UDim2.new(0,8,0,hH+tH+16)
+    ca.Size=UDim2.new(1,-16,0,cH)
+    progBg.Position=UDim2.new(0,8,0,hH+tH+cH+16)
+    progBg.Size=UDim2.new(1,-16,0,pH)
+    statBar.Position=UDim2.new(0,8,0,hH+tH+cH+pH+24)
+    statBar.Size=UDim2.new(1,-16,0,sH)
+end
+
+local progFill=frame(progBg,UDim2.new(0,0,1,0),UDim2.new(0,0,0,0),ACCENT)
+corner(progBg,3); corner(progFill,3)
+
+local statLbl =lbl(statBar,"✅ Ready",UDim2.new(0.55,0,1,0),UDim2.new(0,6,0,0),11,GREEN)
+local timerLbl=lbl(statBar,"⏱ 0s",UDim2.new(0.25,0,1,0),UDim2.new(0.55,0,0,0),11,DIM,Enum.Font.Gotham,Enum.TextXAlignment.Center)
+local speedLbl=lbl(statBar,"",UDim2.new(0.2,0,1,0),UDim2.new(0.8,0,0,0),10,ORANGE,Enum.Font.Gotham,Enum.TextXAlignment.Right)
+
+-- Resize handle
+local resizeH=frame(mf,UDim2.new(0,12,0,12),UDim2.new(1,-12,1,-12),ACCENT)
+resizeH.BackgroundTransparency=0.6; corner(resizeH,4)
+
+local rDrag=false; local rStart,rSize
+resizeH.InputBegan:Connect(function(inp)
+    if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
+        rDrag=true; rStart=inp.Position; rSize=Vector2.new(mf.AbsoluteSize.X,mf.AbsoluteSize.Y)
+        inp.Changed:Connect(function()
+            if inp.UserInputState==Enum.UserInputState.End then
+                rDrag=false; CFG.GuiW=mf.AbsoluteSize.X; CFG.GuiH=mf.AbsoluteSize.Y; saveCFG()
+            end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(inp)
+    if not rDrag then return end
+    if inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch then
+        local d=inp.Position-rStart
+        mf.Size=UDim2.new(0,math.clamp(rSize.X+d.X,300,800),0,math.clamp(rSize.Y+d.Y,400,900))
+        updateLayout()
+    end
+end)
+
+task.wait(0.1); updateLayout()
+
+-- Header content
+lbl(hdr,"⚡ Xinnz v1.2",UDim2.new(0,130,1,0),UDim2.new(0,8,0,0),13,ACCENT,Enum.Font.GothamBold)
+local statsLbl=lbl(hdr,"✅0 ❌0",UDim2.new(0,90,1,0),UDim2.new(0,132,0,0),11,DIM,Enum.Font.Gotham)
+local function refreshStats()
+    pcall(function()
+        local s=loadStats()
+        statsLbl.Text="✅"..tostring(s.success or 0).." ❌"..tostring(s.fail or 0)
+    end)
+end
+refreshStats()
+local minB  =btn(hdr,"—",UDim2.new(0,28,0,28),UDim2.new(1,-64,0,8),BG3,16)
+local closeB=btn(hdr,"✕",UDim2.new(0,28,0,28),UDim2.new(1,-32,0,8),RED,16)
+
+-- Tabs
+local TAB_NAMES={"Main","Info","Hist","Files","Set"}
+local tabBtns={}
+for i,name in ipairs(TAB_NAMES) do
+    local tb=btn(tabBar,name,UDim2.new(0.2,-3,1,-4),UDim2.new((i-1)*0.2,2,0,2),i==1 and ACCENT or BG3,11)
+    tb.TextColor3=i==1 and Color3.new(0,0,0) or DIM; corner(tb,6); tabBtns[i]=tb
+end
+
+local pages={}
+for i=1,#TAB_NAMES do
+    local p=frame(ca,UDim2.new(1,0,1,0),UDim2.new(0,0,0,0),BG,1); p.Visible=(i==1); pages[i]=p
+end
+
+local function setProgress(pct)
+    pcall(function()
+        TweenService:Create(progFill,TweenInfo.new(0.2),{Size=UDim2.new(math.clamp(pct,0,100)/100,0,1,0)}):Play()
+    end)
+end
+local function setStatus(txt,col)
+    pcall(function() statLbl.Text=txt; statLbl.TextColor3=col or WHITE end)
+end
+local function showSpd(txt) pcall(function() speedLbl.Text=tostring(txt) end) end
+
+-- Log (shared)
+local logOrder=0; local logSF=nil
+local function addLog(txt,col)
+    logOrder=logOrder+1; local n=logOrder
+    if logSF then
+        pcall(function()
+            local l=Instance.new("TextLabel")
+            l.Size=UDim2.new(1,-6,0,16); l.BackgroundTransparency=1
+            l.Text="• "..tostring(txt); l.TextColor3=col or WHITE
+            l.TextSize=10; l.Font=Enum.Font.Gotham
+            l.TextXAlignment=Enum.TextXAlignment.Left
+            l.TextWrapped=true; l.BorderSizePixel=0; l.LayoutOrder=n; l.Parent=logSF
+            task.defer(function()
+                pcall(function() logSF.CanvasPosition=Vector2.new(0,logSF.AbsoluteCanvasSize.Y) end)
+            end)
+        end)
+    end
+    print("[Xinnz] "..tostring(txt))
+end
+
+-- =====================================================
+-- PAGE 1 — MAIN
+-- =====================================================
+local ignoreState   = false
+local autoOrgState  = CFG.AutoOrganize
+local dupState      = CFG.DupCheck
+local autoUploadState = CFG.AutoUpload
+local excludedSet   = {}
+local serviceBtns   = {}
+
+-- Load All state
+local LA_FOLDER    = "Xinnz_Loaded"
+local LA_ACTIVE    = false
+local _laSeen      = {}
+local _laAddConn   = nil
+local _laHeartConn = nil
+local _laKnownPos  = {}
+local _laKnownKeys = {}
+local _laKnownIdx  = 1
+
+local infoVals = {}
+local loadAllBtn
+
+do
+    local p1  = pages[1]
+    local p1s = sf(p1,UDim2.new(1,0,1,0))
+    llayout(p1s,5); pad(p1s,6)
+
+    local function pb(txt,col,order)
+        local b=btn(p1s,txt,UDim2.new(1,-4,0,44),UDim2.new(0,2,0,0),col,13)
+        b.LayoutOrder=order; return b
+    end
+
+    local copyNoScript      = pb("📦  Copy WITHOUT Script",       BLUE,   1)
+    local copyWithScript    = pb("📜  Copy WITH Script",          GREEN,  2)
+    local copyWithTerrain   = pb("🏔️  Copy WITH Terrain",        ORANGE, 3)
+    local copyTerrainScript = pb("🏔️📜 Terrain + Script (Full)", TEAL,   4)
+    loadAllBtn              = pb("🌍  Load All Instances: OFF",   PURPLE, 5)
+
+    lbl(p1s,"────── Options ──────",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),11,DIM,Enum.Font.Gotham,Enum.TextXAlignment.Center).LayoutOrder=6
+
+    local fmtB     = pb("📄 Format: "..CFG.OutputFormat,BG3,7)
+    local ignoreB  = pb("👤 Ignore Players: OFF",BG3,8)
+    local autoOrgB = pb("📁 Auto-Organize: "..(autoOrgState and "ON" or "OFF"),autoOrgState and GREEN or BG3,9)
+    local dupB     = pb("🔍 Dup Check: "..(dupState and "ON" or "OFF"),dupState and GREEN or BG3,10)
+    local autoUpB  = pb("☁️ Auto Upload: "..(autoUploadState and "ON ✅" or "OFF ❌"),autoUploadState and TEAL or BG3,11)
+
+    lbl(p1s,"────── Select Services ──────",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),11,DIM,Enum.Font.Gotham,Enum.TextXAlignment.Center).LayoutOrder=12
+
+    local SERVICES={"Workspace","ReplicatedStorage","ReplicatedFirst","ServerStorage",
+        "ServerScriptService","StarterGui","StarterPack","StarterPlayer",
+        "Lighting","SoundService","Teams","Chat"}
+    for _,v in ipairs(CFG.ExcludeList) do excludedSet[v]=true end
+
+    local svcGrid=frame(p1s,UDim2.new(1,-4,0,192),UDim2.new(0,2,0,0),BG,1)
+    svcGrid.LayoutOrder=13
+    local svcGL=Instance.new("UIGridLayout")
+    svcGL.CellSize=UDim2.new(0.5,-4,0,28); svcGL.CellPadding=UDim2.new(0,4,0,4)
+    svcGL.SortOrder=Enum.SortOrder.LayoutOrder; svcGL.Parent=svcGrid
+
+    for i,svc in ipairs(SERVICES) do
+        local excluded=excludedSet[svc]
+        local sb=Instance.new("TextButton")
+        sb.Size=UDim2.new(1,0,0,28); sb.BackgroundColor3=excluded and RED or BG3
+        sb.Text=(excluded and "✕ " or "✓ ")..svc; sb.TextColor3=WHITE
+        sb.TextSize=10; sb.Font=Enum.Font.Gotham; sb.AutoButtonColor=true
+        sb.BorderSizePixel=0; sb.TextWrapped=true; sb.LayoutOrder=i; sb.Parent=svcGrid
+        corner(sb,6); serviceBtns[svc]=sb
+        local cap=svc
+        sb.MouseButton1Click:Connect(function()
+            excludedSet[cap]=not excludedSet[cap]
+            local ex=excludedSet[cap]
+            sb.BackgroundColor3=ex and RED or BG3; sb.Text=(ex and "✕ " or "✓ ")..cap
+            CFG.ExcludeList={}
+            for k,v2 in pairs(excludedSet) do if v2 then table.insert(CFG.ExcludeList,k) end end
+            saveCFG()
+        end)
+    end
+
+    lbl(p1s,"────── Log ──────",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),11,DIM,Enum.Font.Gotham,Enum.TextXAlignment.Center).LayoutOrder=14
+    local logOut=frame(p1s,UDim2.new(1,-4,0,108),UDim2.new(0,2,0,0),BG2)
+    logOut.LayoutOrder=15
+    logSF=sf(logOut,UDim2.new(1,-8,1,-8),UDim2.new(0,4,0,4))
+    llayout(logSF,2)
+
+    -- Button handlers
+    fmtB.MouseButton1Click:Connect(function()
+        local fmts={"RBXLX","RBXL","RBXM"}; local idx=1
+        for i,v in ipairs(fmts) do if v==CFG.OutputFormat then idx=i; break end end
+        idx=(idx%#fmts)+1; CFG.OutputFormat=fmts[idx]
+        fmtB.Text="📄 Format: "..CFG.OutputFormat; saveCFG()
+        if CFG.OutputFormat=="RBXL" then showToast("⚠️ RBXL binary — use RBXLX",YELLOW,4)
+        else showToast("📄 "..CFG.OutputFormat.." ✅",ACCENT,1.5) end
+    end)
+    ignoreB.MouseButton1Click:Connect(function()
+        ignoreState=not ignoreState
+        ignoreB.Text="👤 Ignore Players: "..(ignoreState and "ON" or "OFF")
+        ignoreB.BackgroundColor3=ignoreState and GREEN or BG3
+    end)
+    autoOrgB.MouseButton1Click:Connect(function()
+        autoOrgState=not autoOrgState; CFG.AutoOrganize=autoOrgState
+        autoOrgB.Text="📁 Auto-Organize: "..(autoOrgState and "ON" or "OFF")
+        autoOrgB.BackgroundColor3=autoOrgState and GREEN or BG3; saveCFG()
+    end)
+    dupB.MouseButton1Click:Connect(function()
+        dupState=not dupState; CFG.DupCheck=dupState
+        dupB.Text="🔍 Dup Check: "..(dupState and "ON" or "OFF")
+        dupB.BackgroundColor3=dupState and GREEN or BG3; saveCFG()
+    end)
+    autoUpB.MouseButton1Click:Connect(function()
+        autoUploadState=not autoUploadState; CFG.AutoUpload=autoUploadState
+        autoUpB.Text="☁️ Auto Upload: "..(autoUploadState and "ON ✅" or "OFF ❌")
+        autoUpB.BackgroundColor3=autoUploadState and TEAL or BG3; saveCFG()
+        if autoUploadState and CFG.OutputFormat=="RBXL" then showToast("⚠️ Switch to RBXLX!",YELLOW,4)
+        else showToast("☁️ Auto Upload "..(autoUploadState and "ON" or "OFF"),autoUploadState and TEAL or RED,2) end
+    end)
+
+    copyNoScript.MouseButton1Click:Connect(function()      doCopy("noscript","Manual") end)
+    copyWithScript.MouseButton1Click:Connect(function()    doCopy("script","Manual") end)
+    copyWithTerrain.MouseButton1Click:Connect(function()   doCopy("terrain","Manual") end)
+    copyTerrainScript.MouseButton1Click:Connect(function() doCopy("terrain_script","Manual") end)
+end
+
+-- =====================================================
+-- PAGE 2 — INFO
+-- =====================================================
+local statVals = {}
+do
+    local p2  = pages[2]
+    local p2s = sf(p2,UDim2.new(1,0,1,0))
+    llayout(p2s,4); pad(p2s,8)
+
+    local function iRow(lTxt,vTxt,order)
+        local row=frame(p2s,UDim2.new(1,-4,0,34),UDim2.new(0,2,0,0),BG3); row.LayoutOrder=order
+        lbl(row,lTxt,UDim2.new(0.52,-4,1,0),UDim2.new(0,6,0,0),11,DIM,Enum.Font.Gotham)
+        local v=lbl(row,vTxt,UDim2.new(0.48,-4,1,0),UDim2.new(0.52,0,0,0),11,ACCENT,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+        v.TextTruncate=Enum.TextTruncate.AtEnd; return v
+    end
+
+    infoVals.gameName  = iRow("Game Name",      "Loading...",                          1)
+    infoVals.placeId   = iRow("Place ID",       tostring(game.PlaceId),                2)
+    infoVals.gameId    = iRow("Game ID",        tostring(game.GameId),                 3)
+    infoVals.jobId     = iRow("Job ID",         tostring(game.JobId):sub(1,14).."...", 4)
+    infoVals.instances = iRow("Instances",      "Counting...",                         5)
+    infoVals.scripts   = iRow("Scripts Total",  "...",                                 6)
+    infoVals.players   = iRow("Players Online", tostring(#Players:GetPlayers()),       7)
+    infoVals.estSize   = iRow("Est. File Size", "...",                                 8)
+    infoVals.streaming = iRow("Streaming",      workspace.StreamingEnabled and "ON ⚠️" or "OFF ✅",9)
+    infoVals.loadAll   = iRow("Load All",       "OFF",                                 10)
+    local execName="Unknown"
+    pcall(function() if identifyexecutor then execName=identifyexecutor() or "Unknown" end end)
+    infoVals.executor  = iRow("Executor",       execName,                              11)
+
+    local s=loadStats()
+    statVals.success   = iRow("Total Successes", tostring(s.success    or 0),12)
+    statVals.fail      = iRow("Total Fails",     tostring(s.fail       or 0),13)
+    statVals.totalSize = iRow("Total Saved",     fmtBytes(s.totalBytes or 0),14)
+
+    local refB=btn(p2s,"🔄 Refresh Info",UDim2.new(1,-4,0,36),UDim2.new(0,2,0,0),PURPLE,13)
+    refB.LayoutOrder=15
+    local cntB=btn(p2s,"🔢 Count Scripts",UDim2.new(1,-4,0,36),UDim2.new(0,2,0,0),BLUE,13)
+    cntB.LayoutOrder=16
+
+    task.spawn(function()
+        task.wait(1.5)
+        local cnt=countInst(); local gn=getRealGameName()
+        pcall(function()
+            infoVals.gameName.Text=gn; infoVals.instances.Text=tostring(cnt)
+            infoVals.estSize.Text=fmtBytes(cnt*180)
+        end)
+    end)
+
+    refB.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            pcall(function() infoVals.instances.Text="..."; infoVals.estSize.Text="..." end)
+            local cnt=countInst()
+            pcall(function()
+                infoVals.gameName.Text=getRealGameName(); infoVals.instances.Text=tostring(cnt)
+                infoVals.estSize.Text=fmtBytes(cnt*180); infoVals.players.Text=tostring(#Players:GetPlayers())
+                local st=loadStats()
+                statVals.success.Text=tostring(st.success or 0)
+                statVals.fail.Text=tostring(st.fail or 0)
+                statVals.totalSize.Text=fmtBytes(st.totalBytes or 0)
+            end)
+            refreshStats(); addLog("🔄 Refreshed",DIM); showToast("🔄 Refreshed!",ACCENT,1.5)
+        end)
+    end)
+    cntB.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            pcall(function() infoVals.scripts.Text="..." end)
+            local total,l_,m_,s_=countScripts()
+            local txt=tostring(total).." (L:"..tostring(l_).." M:"..tostring(m_).." S:"..tostring(s_)..")"
+            pcall(function() infoVals.scripts.Text=txt end)
+            addLog("🔢 "..txt,ACCENT); showToast("🔢 "..tostring(total).." scripts",ACCENT,2)
+        end)
+    end)
+end
+
+-- =====================================================
+-- PAGE 3 — HISTORY
+-- =====================================================
+local histSF
+do
+    local p3=pages[3]
+    histSF=sf(p3,UDim2.new(1,0,1,-38))
+    llayout(histSF,4); pad(histSF,6)
+    local clrB=btn(p3,"🗑 Clear History",UDim2.new(1,-12,0,30),UDim2.new(0,6,1,-34),RED,12)
+
+    local function renderHist()
+        for _,c in ipairs(histSF:GetChildren()) do
+            if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
+        end
+        local h=loadHistory()
+        if #h==0 then
+            lbl(histSF,"No history yet.",UDim2.new(1,-12,0,30),UDim2.new(0,6,0,0),12,DIM,Enum.Font.Gotham,Enum.TextXAlignment.Center).LayoutOrder=1
+            return
+        end
+        for i,e in ipairs(h) do
+            local cH=e.uploadLink and 84 or 68
+            local card=frame(histSF,UDim2.new(1,-4,0,cH),UDim2.new(0,2,0,0),BG3); card.LayoutOrder=i
+            lbl(card,tostring(e.gameName or "?"),UDim2.new(1,-72,0,20),UDim2.new(0,6,0,2),12,WHITE,Enum.Font.GothamBold)
+            local sub=tostring(e.mode or "?").." · "..tostring(e.format or "?").." · "..tostring(e.size or "?").." · "..tostring(e.date or "?")
+            lbl(card,sub,UDim2.new(1,-8,0,18),UDim2.new(0,6,0,24),10,DIM)
+            local oc=e.success and GREEN or RED
+            lbl(card,(e.success and "✅" or "❌").." "..tostring(e.duration or ""),UDim2.new(0,66,0,18),UDim2.new(1,-70,0,4),11,oc,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+            if e.speed then lbl(card,"⚡"..tostring(e.speed),UDim2.new(0,66,0,16),UDim2.new(1,-70,0,26),10,ORANGE,Enum.Font.Gotham,Enum.TextXAlignment.Right) end
+            if e.trigger then lbl(card,"📡 "..tostring(e.trigger),UDim2.new(0.6,0,0,14),UDim2.new(0,6,0,50),9,PURPLE) end
+            if e.uploadLink then lbl(card,"☁️ "..tostring(e.uploadLink):sub(1,46),UDim2.new(1,-8,0,14),UDim2.new(0,6,0,68),9,TEAL) end
+        end
+    end
+    renderHist()
+
+    clrB.MouseButton1Click:Connect(function()
+        saveHistory({}); renderHist()
+        addLog("🗑 History cleared",YELLOW); showToast("🗑 History cleared",YELLOW)
+    end)
+
+    -- Re-render when tab selected
+end
+
+-- =====================================================
+-- PAGE 4 — FILES
+-- =====================================================
+local fileSF
+do
+    local p4=pages[4]
+    fileSF=sf(p4,UDim2.new(1,0,1,-42))
+    llayout(fileSF,4); pad(fileSF,6)
+    local scanB=btn(p4,"🔍 Scan",UDim2.new(0.5,-7,0,34),UDim2.new(0,6,1,-38),PURPLE,12)
+    local pathB=btn(p4,"📂 Path",UDim2.new(0.5,-7,0,34),UDim2.new(0.5,1,1,-38),BLUE,11)
+    local fCount=0
+
+    local function renderFiles()
+        for _,c in ipairs(fileSF:GetChildren()) do
+            if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
+        end
+        fCount=0
+        local dir=(CFG.SaveFolder~="" and CFG.SaveFolder) or DATA.."/saves"
+        local files={}
+        local ok2,er=pcall(function() if isfolder(dir) then files=listfiles(dir) or {} end end)
+        if not ok2 then
+            lbl(fileSF,"⚠️ Error:\n"..tostring(er),UDim2.new(1,-12,0,60),UDim2.new(0,6,0,0),11,RED,Enum.Font.Gotham,Enum.TextXAlignment.Center).LayoutOrder=1; return
+        end
+        if #files==0 then
+            lbl(fileSF,"📭 Empty:\n"..dir,UDim2.new(1,-12,0,50),UDim2.new(0,6,0,0),11,DIM,Enum.Font.Gotham,Enum.TextXAlignment.Center).LayoutOrder=1; return
+        end
+        for i,fp in ipairs(files) do
+            fCount=fCount+1
+            local fname=fp:match("([^/\\]+)$") or fp
+            local fsize="?"
+            pcall(function() if isfile(fp) then fsize=fmtBytes(#readfile(fp)) end end)
+            local card=frame(fileSF,UDim2.new(1,-4,0,52),UDim2.new(0,2,0,0),BG3); card.LayoutOrder=i
+            lbl(card,fname,UDim2.new(1,-50,0,20),UDim2.new(0,6,0,2),10,WHITE,Enum.Font.GothamBold)
+            lbl(card,"📦 "..fsize,UDim2.new(1,-50,0,18),UDim2.new(0,6,0,26),10,DIM)
+            local delB=btn(card,"🗑",UDim2.new(0,38,0,38),UDim2.new(1,-44,0,7),RED,14)
+            local cFP,cFN,cCard=fp,fname,card
+            delB.MouseButton1Click:Connect(function()
+                pcall(function()
+                    if isfile(cFP) then delfile(cFP) end
+                    cCard:Destroy()
+                    addLog("🗑 "..cFN,YELLOW); showToast("🗑 Deleted",YELLOW)
+                end)
+            end)
+        end
+    end
+
+    scanB.MouseButton1Click:Connect(function()
+        renderFiles()
+        addLog("📂 "..tostring(fCount).." file(s)",ACCENT)
+        showToast("📂 Found "..tostring(fCount).." file(s)",ACCENT)
+    end)
+    pathB.MouseButton1Click:Connect(function()
+        local dir=(CFG.SaveFolder~="" and CFG.SaveFolder) or DATA.."/saves"
+        setStatus("📂 "..dir,ACCENT); showToast("📂 "..dir:sub(1,30),ACCENT,4)
+    end)
+end
+
+-- =====================================================
+-- PAGE 5 — SETTINGS (dengan Export/Import Preset + Discord Cmd)
+-- =====================================================
+local webhookEnabled  = CFG.WebhookEnabled
+local chatCmdEnabled  = CFG.ChatCommandEnabled
+local playerTrigState = CFG.PlayerTrigger
+local bakEnabled      = CFG.BackupEnabled
+
+-- Referensi tombol yang akan di-update saat import
+local autoOrgB, dupB, autoUploadB, bakToggle, webhookToggle, chatCmdToggle, playerTrigToggle, trigModeB, themeB
+
+do
+    local p5  = pages[5]
+    local p5s = sf(p5,UDim2.new(1,0,1,0))
+    llayout(p5s,5); pad(p5s,6)
+
+    local function sl(txt,order)
+        local l=lbl(p5s,txt,UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),10,DIM)
+        l.LayoutOrder=order; return l
+    end
+    local function pb2(txt,col,order)
+        local b=btn(p5s,txt,UDim2.new(1,-4,0,34),UDim2.new(0,2,0,0),col,12)
+        b.LayoutOrder=order; return b
+    end
+
+    sl("📂 Save Folder:",1)
+    local savePathTB,_sp=tbx(p5s,DATA.."/saves",CFG.SaveFolder,UDim2.new(1,-4,0,32)); _sp.LayoutOrder=2
+    sl("📝 Filename Template:",3)
+    local tmplTB,_tm=tbx(p5s,"{gameName}_{date}_{time}",CFG.FilenameTemplate,UDim2.new(1,-4,0,32)); _tm.LayoutOrder=4
+    lbl(p5s,"Tags: {gameName} {placeId} {gameId} {date} {time}",UDim2.new(1,-4,0,12),UDim2.new(0,2,0,0),9,DIM).LayoutOrder=5
+    sl("🔁 Retry Attempts (1-5):",6)
+    local retryTB,_rt=tbx(p5s,"3",tostring(CFG.RetryAttempts),UDim2.new(1,-4,0,32)); _rt.LayoutOrder=7
+    sl("🚫 Exclude Services (comma):",8)
+    local excludeTB,_ex=tbx(p5s,"SoundService,Lighting",table.concat(CFG.ExcludeList,","),UDim2.new(1,-4,0,32)); _ex.LayoutOrder=9
+    sl("⏰ Auto-Backup:",10)
+    local bakTog=pb2("Auto-Backup: "..(bakEnabled and "ON ✅" or "OFF ❌"),bakEnabled and GREEN or BG3,11)
+    bakToggle = bakTog
+    sl("⏱ Backup Interval (minutes):",12)
+    local bakIntTB,_bi=tbx(p5s,"10",tostring(CFG.BackupInterval),UDim2.new(1,-4,0,32)); _bi.LayoutOrder=13
+    sl("🎨 Theme:",14)
+    local THEME_NAMES={"Cyan","Ocean","Red"}
+    local themeBt=pb2("🎨 Theme: "..CFG.Theme,PURPLE,15)
+    themeB = themeBt
+
+    lbl(p5s,"────── v1 Features ──────",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),10,ACCENT,Enum.Font.GothamBold,Enum.TextXAlignment.Center).LayoutOrder=16
+    sl("📡 Discord Webhook URL:",17)
+    local webhookTB,_wh=tbx(p5s,"https://discord.com/api/webhooks/ID/TOKEN",CFG.WebhookURL,UDim2.new(1,-4,0,32)); _wh.LayoutOrder=18
+    sl("🖼️ Webhook Avatar URL (optional):",19)
+    local avatarTB,_av=tbx(p5s,"https://...",CFG.WebhookAvatar,UDim2.new(1,-4,0,32)); _av.LayoutOrder=20
+    local whTog=pb2("📡 Webhook: "..(webhookEnabled and "ON ✅" or "OFF ❌"),webhookEnabled and GREEN or BG3,21)
+    webhookToggle = whTog
+    local ccTog=pb2("💬 Chat /xinnz: "..(chatCmdEnabled and "ON ✅" or "OFF ❌"),chatCmdEnabled and GREEN or BG3,22)
+    chatCmdToggle = ccTog
+    lbl(p5s,"/xinnz copy|script|terrain|ts|loadall|status|help",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),9,DIM).LayoutOrder=23
+    local ptTog=pb2("👥 Player Trigger: "..(playerTrigState and "ON ✅" or "OFF ❌"),playerTrigState and GREEN or BG3,24)
+    playerTrigToggle = ptTog
+    sl("👥 Threshold (players ≤ N):",25)
+    local trigCountTB,_tc=tbx(p5s,"3",tostring(CFG.PlayerTriggerCount),UDim2.new(1,-4,0,32)); _tc.LayoutOrder=26
+    local TRIG_MODES ={"noscript","script","terrain","terrain_script"}
+    local TRIG_LABELS={noscript="No Script",script="With Script",terrain="Terrain",terrain_script="Terrain+Script"}
+    local trigMB=pb2("📦 Trigger Mode: "..(TRIG_LABELS[CFG.PlayerTriggerMode] or "No Script"),BG3,27)
+    trigModeB = trigMB
+
+    lbl(p5s,"────── ☁️ Auto Uploader ──────",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),10,TEAL,Enum.Font.GothamBold,Enum.TextXAlignment.Center).LayoutOrder=28
+    local upSvcB=pb2("☁️ Upload via: "..CFG.UploadService,TEAL,29)
+    lbl(p5s,"catbox.moe → litterbox → filebin\n⚠️ Use RBXLX to avoid HTML",UDim2.new(1,-4,0,26),UDim2.new(0,2,0,0),9,YELLOW).LayoutOrder=30
+    local testB=pb2("🧪 Test Upload",BLUE,31)
+    local saveB=btn(p5s,"💾 Save Settings",UDim2.new(1,-4,0,38),UDim2.new(0,2,0,0),PURPLE,13); saveB.LayoutOrder=32
+    local rstB =btn(p5s,"♻️ Reset Defaults",UDim2.new(1,-4,0,34),UDim2.new(0,2,0,0),RED,12);  rstB.LayoutOrder=33
+
+    -- ===== TOMBOL EXPORT/IMPORT PRESET =====
+    local exportB = btn(p5s, "📤 Export Preset", UDim2.new(1, -4, 0, 34), UDim2.new(0, 2, 0, 0), BLUE, 12)
+    exportB.LayoutOrder = 34
+    local importB = btn(p5s, "📥 Import Preset", UDim2.new(1, -4, 0, 34), UDim2.new(0, 2, 0, 0), PURPLE, 12)
+    importB.LayoutOrder = 35
+
+    -- ===== FITUR DISCORD COMMAND BRIDGE =====
+    lbl(p5s,"────── 🤖 Discord Command Bridge ──────",UDim2.new(1,-4,0,14),UDim2.new(0,2,0,0),10,ACCENT,Enum.Font.GothamBold,Enum.TextXAlignment.Center).LayoutOrder=36
+    local cmdToggle=pb2("🤖 Enable Discord Commands: "..(CFG.DiscordCmdEnabled and "ON ✅" or "OFF ❌"),CFG.DiscordCmdEnabled and GREEN or BG3,37)
+    sl("📁 Command File:",38)
+    local cmdFileTB,_cf=tbx(p5s,"XinnzData/discord_cmd.txt",CFG.DiscordCmdFile,UDim2.new(1,-4,0,32)); _cf.LayoutOrder=39
+    sl("📄 Response File:",40)
+    local respFileTB,_rf=tbx(p5s,"XinnzData/discord_resp.txt",CFG.DiscordRespFile,UDim2.new(1,-4,0,32)); _rf.LayoutOrder=41
+
+    -- Handler Export
+    exportB.MouseButton1Click:Connect(function()
+        pcall(function()
+            -- Kumpulkan setting terbaru dari UI
+            CFG.SaveFolder = savePathTB.Text ~= "" and savePathTB.Text or DATA.."/saves"
+            CFG.FilenameTemplate = tmplTB.Text ~= "" and tmplTB.Text or "{gameName}_{date}_{time}"
+            CFG.RetryAttempts = tonumber(retryTB.Text) or 3
+            CFG.BackupInterval = tonumber(bakIntTB.Text) or 10
+            CFG.WebhookURL = webhookTB.Text or ""
+            CFG.WebhookAvatar = avatarTB.Text or ""
+            CFG.PlayerTriggerCount = tonumber(trigCountTB.Text) or 3
+            CFG.DiscordCmdEnabled = (cmdToggle.Text:match("ON") ~= nil)
+            CFG.DiscordCmdFile = cmdFileTB.Text
+            CFG.DiscordRespFile = respFileTB.Text
+            -- Exclude list
+            CFG.ExcludeList = {}
+            for s in excludeTB.Text:gmatch("[^,]+") do
+                local t = s:match("^%s*(.-)%s*$")
+                if t ~= "" then table.insert(CFG.ExcludeList, t) end
+            end
+            -- Flags dan mode
+            CFG.AutoOrganize = autoOrgState
+            CFG.DupCheck = dupState
+            CFG.AutoUpload = autoUploadState
+            CFG.BackupEnabled = bakEnabled
+            CFG.ChatCommandEnabled = chatCmdEnabled
+            CFG.PlayerTrigger = playerTrigState
+            CFG.PlayerTriggerMode = CFG.PlayerTriggerMode
+            CFG.Theme = CFG.Theme
+            CFG.OutputFormat = CFG.OutputFormat
+            CFG.UploadService = CFG.UploadService
+            CFG.WebhookEnabled = webhookEnabled
+            -- Ukuran GUI
+            CFG.GuiW = mf.AbsoluteSize.X
+            CFG.GuiH = mf.AbsoluteSize.Y
+
+            local presetData = {
+                SaveFolder = CFG.SaveFolder,
+                RetryAttempts = CFG.RetryAttempts,
+                OutputFormat = CFG.OutputFormat,
+                AutoOrganize = CFG.AutoOrganize,
+                DupCheck = CFG.DupCheck,
+                ExcludeList = CFG.ExcludeList,
+                Theme = CFG.Theme,
+                BackupEnabled = CFG.BackupEnabled,
+                BackupInterval = CFG.BackupInterval,
+                FilenameTemplate = CFG.FilenameTemplate,
+                WebhookURL = CFG.WebhookURL,
+                WebhookEnabled = CFG.WebhookEnabled,
+                WebhookAvatar = CFG.WebhookAvatar,
+                ChatCommandEnabled = CFG.ChatCommandEnabled,
+                PlayerTrigger = CFG.PlayerTrigger,
+                PlayerTriggerCount = CFG.PlayerTriggerCount,
+                PlayerTriggerMode = CFG.PlayerTriggerMode,
+                AutoUpload = CFG.AutoUpload,
+                UploadService = CFG.UploadService,
+                GuiW = CFG.GuiW,
+                GuiH = CFG.GuiH,
+                DiscordCmdEnabled = CFG.DiscordCmdEnabled,
+                DiscordCmdFile = CFG.DiscordCmdFile,
+                DiscordRespFile = CFG.DiscordRespFile,
+            }
+            local json = HttpService:JSONEncode(presetData)
+            writefile(DATA.."/preset.json", json)
+            addLog("✅ Preset exported to XinnzData/preset.json", GREEN)
+            showToast("✅ Preset exported!", GREEN, 2)
+        end)
+    end)
+
+    -- Handler Import
+    importB.MouseButton1Click:Connect(function()
+        pcall(function()
+            local path = DATA.."/preset.json"
+            if not isfile(path) then
+                showToast("❌ No preset file found!", RED, 2)
+                addLog("❌ No preset file found at "..path, RED)
+                return
+            end
+            local json = readfile(path)
+            local preset = HttpService:JSONDecode(json)
+
+            -- Terapkan ke CFG
+            for k, v in pairs(preset) do
+                if CFG[k] ~= nil then
+                    CFG[k] = v
+                end
+            end
+            CFG.GuiW = preset.GuiW or 340
+            CFG.GuiH = preset.GuiH or 530
+
+            -- Update UI
+            savePathTB.Text = CFG.SaveFolder
+            tmplTB.Text = CFG.FilenameTemplate
+            retryTB.Text = tostring(CFG.RetryAttempts)
+            bakIntTB.Text = tostring(CFG.BackupInterval)
+            webhookTB.Text = CFG.WebhookURL
+            avatarTB.Text = CFG.WebhookAvatar
+            trigCountTB.Text = tostring(CFG.PlayerTriggerCount)
+            cmdFileTB.Text = CFG.DiscordCmdFile
+            respFileTB.Text = CFG.DiscordRespFile
+
+            local excludeStr = table.concat(CFG.ExcludeList, ",")
+            excludeTB.Text = excludeStr
+
+            autoOrgState = CFG.AutoOrganize
+            autoOrgB.Text = "📁 Auto-Organize: "..(autoOrgState and "ON" or "OFF")
+            autoOrgB.BackgroundColor3 = autoOrgState and GREEN or BG3
+
+            dupState = CFG.DupCheck
+            dupB.Text = "🔍 Dup Check: "..(dupState and "ON" or "OFF")
+            dupB.BackgroundColor3 = dupState and GREEN or BG3
+
+            autoUploadState = CFG.AutoUpload
+            autoUploadB.Text = "☁️ Auto Upload: "..(autoUploadState and "ON ✅" or "OFF ❌")
+            autoUploadB.BackgroundColor3 = autoUploadState and TEAL or BG3
+
+            bakEnabled = CFG.BackupEnabled
+            bakToggle.Text = "Auto-Backup: "..(bakEnabled and "ON ✅" or "OFF ❌")
+            bakToggle.BackgroundColor3 = bakEnabled and GREEN or BG3
+
+            webhookEnabled = CFG.WebhookEnabled
+            webhookToggle.Text = "📡 Webhook: "..(webhookEnabled and "ON ✅" or "OFF ❌")
+            webhookToggle.BackgroundColor3 = webhookEnabled and GREEN or BG3
+
+            chatCmdEnabled = CFG.ChatCommandEnabled
+            chatCmdToggle.Text = "💬 Chat /xinnz: "..(chatCmdEnabled and "ON ✅" or "OFF ❌")
+            chatCmdToggle.BackgroundColor3 = chatCmdEnabled and GREEN or BG3
+
+            playerTrigState = CFG.PlayerTrigger
+            playerTrigToggle.Text = "👥 Player Trigger: "..(playerTrigState and "ON ✅" or "OFF ❌")
+            playerTrigToggle.BackgroundColor3 = playerTrigState and GREEN or BG3
+
+            CFG.PlayerTriggerMode = preset.PlayerTriggerMode or "noscript"
+            trigModeB.Text = "📦 Trigger Mode: "..(TRIG_LABELS[CFG.PlayerTriggerMode] or "No Script")
+
+            CFG.Theme = preset.Theme or "Cyan"
+            themeB.Text = "🎨 Theme: "..CFG.Theme
+            local newT = THEME_DATA[CFG.Theme] or THEME_DATA.Cyan
+            ACCENT = newT.ACCENT
+            pcall(function()
+                progFill.BackgroundColor3 = ACCENT
+                floatB.BackgroundColor3 = ACCENT
+                resizeH.BackgroundColor3 = ACCENT
+                tabBtns[1].BackgroundColor3 = ACCENT  -- active tab
+            end)
+
+            -- Discord Cmd toggle
+            CFG.DiscordCmdEnabled = preset.DiscordCmdEnabled or false
+            cmdToggle.Text = "🤖 Enable Discord Commands: "..(CFG.DiscordCmdEnabled and "ON ✅" or "OFF ❌")
+            cmdToggle.BackgroundColor3 = CFG.DiscordCmdEnabled and GREEN or BG3
+
+            -- Update exclude buttons
+            excludedSet = {}
+            for _, v in ipairs(CFG.ExcludeList) do excludedSet[v] = true end
+            for svc, sb in pairs(serviceBtns) do
+                local ex = excludedSet[svc]
+                sb.BackgroundColor3 = ex and RED or BG3
+                sb.Text = (ex and "✕ " or "✓ ")..svc
+            end
+
+            -- Update ukuran GUI
+            mf.Size = UDim2.new(0, CFG.GuiW, 0, CFG.GuiH)
+            updateLayout()
+
+            saveCFG()
+            addLog("✅ Preset imported successfully!", GREEN)
+            showToast("✅ Preset imported!", GREEN, 2)
+        end)
+    end)
+    -- =============================================
+
+    -- Settings handlers
+    bakTog.MouseButton1Click:Connect(function()
+        bakEnabled=not bakEnabled; CFG.BackupEnabled=bakEnabled
+        bakTog.Text="Auto-Backup: "..(bakEnabled and "ON ✅" or "OFF ❌")
+        bakTog.BackgroundColor3=bakEnabled and GREEN or BG3
+        if bakEnabled then
+            local n=tonumber(bakIntTB.Text)
+            CFG.BackupInterval=n and math.clamp(math.floor(n),1,120) or 10
+            showToast("⏰ ON "..tostring(CFG.BackupInterval).."m",GREEN)
+        else showToast("⏰ OFF",RED) end
+        saveCFG()
+    end)
+    themeBt.MouseButton1Click:Connect(function()
+        local idx=1
+        for i,v in ipairs(THEME_NAMES) do if v==CFG.Theme then idx=i; break end end
+        idx=(idx%#THEME_NAMES)+1; CFG.Theme=THEME_NAMES[idx]
+        themeBt.Text="🎨 Theme: "..CFG.Theme; saveCFG()
+        local nT=THEME_DATA[CFG.Theme] or THEME_DATA.Cyan; ACCENT=nT.ACCENT
+        pcall(function()
+            progFill.BackgroundColor3=ACCENT; floatB.BackgroundColor3=ACCENT
+            resizeH.BackgroundColor3=ACCENT
+            tabBtns[1].BackgroundColor3=ACCENT
+        end)
+        showToast("🎨 "..CFG.Theme,ACCENT)
+    end)
+    whTog.MouseButton1Click:Connect(function()
+        webhookEnabled=not webhookEnabled; CFG.WebhookEnabled=webhookEnabled
+        whTog.Text="📡 Webhook: "..(webhookEnabled and "ON ✅" or "OFF ❌")
+        whTog.BackgroundColor3=webhookEnabled and GREEN or BG3; saveCFG()
+        showToast("📡 "..(webhookEnabled and "ON" or "OFF"),webhookEnabled and GREEN or RED,1.5)
+    end)
+    ccTog.MouseButton1Click:Connect(function()
+        chatCmdEnabled=not chatCmdEnabled; CFG.ChatCommandEnabled=chatCmdEnabled
+        ccTog.Text="💬 Chat /xinnz: "..(chatCmdEnabled and "ON ✅" or "OFF ❌")
+        ccTog.BackgroundColor3=chatCmdEnabled and GREEN or BG3; saveCFG()
+        showToast("💬 "..(chatCmdEnabled and "ON" or "OFF"),chatCmdEnabled and GREEN or RED,1.5)
+    end)
+    ptTog.MouseButton1Click:Connect(function()
+        playerTrigState=not playerTrigState; CFG.PlayerTrigger=playerTrigState
+        ptTog.Text="👥 Player Trigger: "..(playerTrigState and "ON ✅" or "OFF ❌")
+        ptTog.BackgroundColor3=playerTrigState and GREEN or BG3
+        local n=tonumber(trigCountTB.Text)
+        CFG.PlayerTriggerCount=n and math.clamp(math.floor(n),1,100) or 3; saveCFG()
+        showToast("👥 "..(playerTrigState and "ON ≤"..tostring(CFG.PlayerTriggerCount).."p" or "OFF"),playerTrigState and GREEN or RED,2)
+    end)
+    trigMB.MouseButton1Click:Connect(function()
+        local idx=1
+        for i,v in ipairs(TRIG_MODES) do if v==CFG.PlayerTriggerMode then idx=i; break end end
+        idx=(idx%#TRIG_MODES)+1; CFG.PlayerTriggerMode=TRIG_MODES[idx]
+        trigMB.Text="📦 Trigger Mode: "..(TRIG_LABELS[CFG.PlayerTriggerMode] or "?"); saveCFG()
+        showToast("📦 "..(TRIG_LABELS[CFG.PlayerTriggerMode] or "?"),ACCENT,1.5)
+    end)
+    upSvcB.MouseButton1Click:Connect(function()
+        local idx=1
+        for i,v in ipairs(UPLOAD_SERVICES) do if v==CFG.UploadService then idx=i; break end end
+        idx=(idx%#UPLOAD_SERVICES)+1; CFG.UploadService=UPLOAD_SERVICES[idx]
+        upSvcB.Text="☁️ Upload via: "..CFG.UploadService; saveCFG()
+        showToast("☁️ "..CFG.UploadService,TEAL,1.5)
+    end)
+
+    testB.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            addLog("🧪 Test upload...",TEAL); setStatus("🧪 Testing...",TEAL)
+            local tc='<?xml version="1.0" encoding="utf-8"?>\n<roblox version="4">\n<Item class="Model">\n<Properties>\n<string name="Name">Xinnz_Test</string>\n</Properties>\n</Item>\n</roblox>'
+            local tn="xinnz_test_"..tostring(os.time())..".rbxlx"
+            local link,svc
+            do
+                local order={CFG.UploadService}
+                for _,sv in ipairs(UPLOAD_SERVICES) do
+                    local found=false
+                    for _,s in ipairs(order) do if s==sv then found=true; break end end
+                    if not found then table.insert(order,sv) end
+                end
+                for _,service in ipairs(order) do
+                    local urlSafe=tn:gsub("[^%w%.%-_]","_")
+                    local boundary="XBound"..tostring(os.time())
+                    local CRLF="\r\n"
+                    if service=="catbox.moe" then
+                        local body="--"..boundary..CRLF..'Content-Disposition: form-data; name="reqtype"'..CRLF..CRLF.."fileupload"..CRLF.."--"..boundary..CRLF..'Content-Disposition: form-data; name="fileToUpload"; filename="'..urlSafe..'"'..CRLF.."Content-Type: application/octet-stream"..CRLF..CRLF..tc..CRLF.."--"..boundary.."--"..CRLF
+                        local ok2,resp=httpReq({Url="https://catbox.moe/user/api.php",Method="POST",Headers={["Content-Type"]="multipart/form-data; boundary="..boundary},Body=body})
+                        local b2=getRespBody(resp)
+                        if ok2 and not isHTMLResp(b2) then
+                            local u=b2:match("^%s*(https?://[^%s\r\n]+)")
+                            if u then link=u; svc=service; break end
+                        end
+                    end
+                end
+            end
+            if link then
+                addLog("✅ Test OK! ["..tostring(svc).."]: "..link,GREEN)
+                showToast("✅ Test OK!\n"..link:sub(1,40),GREEN,7)
+                playSound(1.5)
+            else
+                addLog("❌ Test failed!",RED)
+                showToast("❌ Test failed! Check RBXLX format",RED,4)
+                playSound(0.6)
+            end
+        end)
+    end)
+
+    -- Handler untuk toggle Discord Cmd
+    cmdToggle.MouseButton1Click:Connect(function()
+        CFG.DiscordCmdEnabled = not CFG.DiscordCmdEnabled
+        cmdToggle.Text = "🤖 Enable Discord Commands: "..(CFG.DiscordCmdEnabled and "ON ✅" or "OFF ❌")
+        cmdToggle.BackgroundColor3 = CFG.DiscordCmdEnabled and GREEN or BG3
+        saveCFG()
+        if CFG.DiscordCmdEnabled then
+            addLog("🤖 Discord Command Bridge ENABLED",GREEN)
+            showToast("🤖 Discord Command Bridge ON",GREEN,2)
+        else
+            addLog("🤖 Discord Command Bridge DISABLED",YELLOW)
+            showToast("🤖 Discord Command Bridge OFF",YELLOW,2)
+        end
+    end)
+
+    saveB.MouseButton1Click:Connect(function()
+        pcall(function()
+            CFG.SaveFolder=savePathTB.Text~="" and savePathTB.Text or DATA.."/saves"
+            CFG.FilenameTemplate=tmplTB.Text~="" and tmplTB.Text or "{gameName}_{date}_{time}"
+            local n=tonumber(retryTB.Text); CFG.RetryAttempts=n and math.clamp(math.floor(n),1,5) or 3
+            local bi=tonumber(bakIntTB.Text); CFG.BackupInterval=bi and math.clamp(math.floor(bi),1,120) or 10
+            CFG.WebhookURL=webhookTB.Text or ""; CFG.WebhookAvatar=avatarTB.Text or ""
+            local tc2=tonumber(trigCountTB.Text); CFG.PlayerTriggerCount=tc2 and math.clamp(math.floor(tc2),1,100) or 3
+            CFG.DiscordCmdFile = cmdFileTB.Text
+            CFG.DiscordRespFile = respFileTB.Text
+            CFG.ExcludeList={}; excludedSet={}
+            for s in excludeTB.Text:gmatch("[^,]+") do
+                local t=s:match("^%s*(.-)%s*$")
+                if t~="" then table.insert(CFG.ExcludeList,t); excludedSet[t]=true end
+            end
+            for svc,sb in pairs(serviceBtns) do
+                local ex=excludedSet[svc]; sb.BackgroundColor3=ex and RED or BG3; sb.Text=(ex and "✕ " or "✓ ")..svc
+            end
+            saveCFG(); addLog("✅ Settings saved",GREEN); setStatus("✅ Saved!",GREEN)
+            showToast("✅ Settings saved!",GREEN); playSound(1.2)
+        end)
+    end)
+    rstB.MouseButton1Click:Connect(function()
+        pcall(function()
+            CFG.SaveFolder=DATA.."/saves"; CFG.RetryAttempts=3; CFG.OutputFormat="RBXLX"
+            CFG.AutoOrganize=true; CFG.DupCheck=true; CFG.ExcludeList={}
+            CFG.BackupEnabled=false; CFG.BackupInterval=10
+            CFG.FilenameTemplate="{gameName}_{date}_{time}"
+            CFG.WebhookURL=""; CFG.WebhookEnabled=false; CFG.WebhookAvatar=""
+            CFG.ChatCommandEnabled=true; CFG.PlayerTrigger=false
+            CFG.PlayerTriggerCount=3; CFG.PlayerTriggerMode="noscript"
+            CFG.AutoUpload=false; CFG.UploadService="catbox.moe"
+            CFG.DiscordCmdEnabled=false; CFG.DiscordCmdFile=DATA.."/discord_cmd.txt"; CFG.DiscordRespFile=DATA.."/discord_resp.txt"
+            saveCFG()
+            savePathTB.Text=DATA.."/saves"; tmplTB.Text="{gameName}_{date}_{time}"
+            retryTB.Text="3"; excludeTB.Text=""; bakIntTB.Text="10"
+            webhookTB.Text=""; avatarTB.Text=""; trigCountTB.Text="3"
+            cmdFileTB.Text=CFG.DiscordCmdFile; respFileTB.Text=CFG.DiscordRespFile
+            cmdToggle.Text="🤖 Enable Discord Commands: OFF ❌"; cmdToggle.BackgroundColor3=BG3
+            excludedSet={}
+            for svc,sb in pairs(serviceBtns) do excludedSet[svc]=nil; sb.BackgroundColor3=BG3; sb.Text="✓ "..svc end
+            addLog("♻️ Reset default",YELLOW); setStatus("♻️ Reset!",YELLOW); showToast("♻️ Settings reset!",YELLOW)
+        end)
+    end)
+end
+
+-- =====================================================
+-- TAB SWITCH + SWIPE
+-- =====================================================
+local currentTab=1
+local function switchTab(idx)
+    currentTab=idx
+    for i,tb in ipairs(tabBtns) do
+        if i==idx then tb.BackgroundColor3=ACCENT; tb.TextColor3=Color3.new(0,0,0)
+        else tb.BackgroundColor3=BG3; tb.TextColor3=DIM end
+        pages[i].Visible=(i==idx)
+    end
+    if idx==2 then
+        pcall(function() infoVals.players.Text=tostring(#Players:GetPlayers()) end)
+        refreshStats()
+    end
+end
+for i,tb in ipairs(tabBtns) do
+    local ci=i; tb.MouseButton1Click:Connect(function() switchTab(ci) end)
+end
+
+local swipeStart=nil
+ca.InputBegan:Connect(function(inp)
+    if inp.UserInputType==Enum.UserInputType.Touch then swipeStart=inp.Position end
+end)
+ca.InputEnded:Connect(function(inp)
+    if inp.UserInputType==Enum.UserInputType.Touch and swipeStart then
+        local delta=inp.Position-swipeStart
+        local absX,absY=math.abs(delta.X),math.abs(delta.Y)
+        if absX>70 and absX>absY*1.5 then
+            if delta.X<0 then
+                local nxt=math.min(currentTab+1,#TAB_NAMES)
+                if nxt~=currentTab then switchTab(nxt); showToast("◀ "..TAB_NAMES[nxt],ACCENT,0.8) end
+            else
+                local prv=math.max(currentTab-1,1)
+                if prv~=currentTab then switchTab(prv); showToast("▶ "..TAB_NAMES[prv],ACCENT,0.8) end
+            end
+        end
+        swipeStart=nil
+    end
+end)
+
+local function setVisible(v) mf.Visible=v; floatB.Visible=not v end
+minB.MouseButton1Click:Connect(function() setVisible(false) end)
+closeB.MouseButton1Click:Connect(function() setVisible(false) end)
+floatB.MouseButton1Click:Connect(function() setVisible(true) end)
+
+local dragging,dragStart,dragOrigin=false,nil,nil
+hdr.InputBegan:Connect(function(inp)
+    if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
+        dragging=true; dragStart=inp.Position; dragOrigin=mf.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(inp)
+    if not dragging then return end
+    if inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch then
+        local d=inp.Position-dragStart
+        mf.Position=UDim2.new(dragOrigin.X.Scale,dragOrigin.X.Offset+d.X,dragOrigin.Y.Scale,dragOrigin.Y.Offset+d.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(inp)
+    if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then dragging=false end
+end)
+
+-- =====================================================
+-- TIMER
+-- =====================================================
+local timerRunning=false; local timerStart=0
+local function startTimer()
+    timerStart=tick(); timerRunning=true
+    task.spawn(function()
+        while timerRunning do
+            local e=tick()-timerStart
+            pcall(function() timerLbl.Text="⏱ "..fmtTime(e) end)
+            task.wait(0.5)
+        end
+    end)
+end
+local function stopTimer()
+    timerRunning=false; local e=tick()-timerStart
+    pcall(function() timerLbl.Text="⏱ "..fmtTime(e) end)
+    return e
+end
+
+-- =====================================================
+-- LOAD ALL INSTANCES — Heartbeat 60fps keep-alive
+-- =====================================================
+local function _laGetFolder()
+    local f=workspace:FindFirstChild(LA_FOLDER)
+    if not f then f=Instance.new("Folder"); f.Name=LA_FOLDER; f.Parent=workspace end
+    return f
+end
+local function _laUpdateUI(txt,col)
+    pcall(function() infoVals.loadAll.Text=txt; infoVals.loadAll.TextColor3=col or ACCENT end)
+end
+local function _laAddPos(pos)
+    if not pos then return end
+    local key=math.floor(pos.X/80)..","..math.floor(pos.Z/80)
+    if not _laKnownKeys[key] then
+        _laKnownKeys[key]=true; table.insert(_laKnownPos,pos)
+    end
+end
+
+local function _laClone(v, folder)
+    if not v or _laSeen[v] then return false end
+    local ok1,par=pcall(function() return v.Parent end)
+    if not ok1 or par==folder or v:IsDescendantOf(folder) then return false end
+    local ok2,name=pcall(function() return v.Name end)
+    if not ok2 or name==LA_FOLDER then return false end
+    local ok3,cls=pcall(function() return v.ClassName end)
+    if not ok3 then return false end
+    local allowed=cls=="Model" or cls=="Part" or cls=="BasePart"
+        or cls=="MeshPart" or cls=="UnionOperation" or cls=="WedgePart"
+    if not allowed then return false end
+    _laSeen[v]=true
+    pcall(function()
+        local cl=v:Clone()
+        if not cl then return end
+        if cl:IsA("BasePart") then cl.Anchored=true end
+        for _,p in ipairs(cl:GetDescendants()) do
+            if p:IsA("BasePart") then p.Anchored=true end
+        end
+        cl.Parent=folder
+    end)
+    for _,desc in ipairs(v:GetDescendants()) do _laSeen[desc]=true end
+    return true
+end
+
+local function stopLoadAll()
+    LA_ACTIVE=false
+    if _laAddConn   then pcall(function() _laAddConn:Disconnect()   end); _laAddConn=nil   end
+    if _laHeartConn then pcall(function() _laHeartConn:Disconnect() end); _laHeartConn=nil end
+    loadAllBtn.Text="🌍  Load All Instances: OFF"; loadAllBtn.BackgroundColor3=PURPLE
+    _laUpdateUI("OFF",DIM)
+    setStatus("🌍 Load All OFF",YELLOW)
+    addLog("⏹ Load All: OFF",YELLOW)
+    showToast("🌍 Load All: OFF",YELLOW,2)
+    print("[Xinnz] ⏹ Load All OFF")
+end
+
+local function startLoadAll()
+    if LA_ACTIVE then return end
+    LA_ACTIVE=true; _laSeen={}; _laKnownPos={}; _laKnownKeys={}; _laKnownIdx=1
+
+    local folder=_laGetFolder()
+    loadAllBtn.Text="⏹  Load All: ON (tap=OFF)"; loadAllBtn.BackgroundColor3=RED
+    _laUpdateUI("ON 🟢 starting...",GREEN)
+    addLog("🌍 Load All ON — Heartbeat 60fps",PURPLE)
+    showToast("🌍 Load All: ON\n🔥 60fps keep-alive!",PURPLE,4)
+    print("[Xinnz] 🌍 Load All ON v1.2")
+
+    -- Heartbeat keep-alive
+    local heartN=0
+    _laHeartConn=RunService.Heartbeat:Connect(function()
+        if not LA_ACTIVE then return end
+        heartN=heartN+1
+        pcall(function()
+            local char=LocalPlayer.Character
+            if char then
+                local hrp=char:FindFirstChild("HumanoidRootPart") or char:FindFirstChildWhichIsA("BasePart")
+                if hrp then workspace:RequestStreamAroundAsync(hrp.Position,512); _laAddPos(hrp.Position) end
+            end
+        end)
+        if heartN%30==0 and #_laKnownPos>0 then
+            pcall(function()
+                local pos=_laKnownPos[_laKnownIdx]
+                if pos then workspace:RequestStreamAroundAsync(pos,300) end
+                _laKnownIdx=(_laKnownIdx%#_laKnownPos)+1
+            end)
+        end
+    end)
+
+    -- DescendantAdded listener
+    _laAddConn=workspace.DescendantAdded:Connect(function(v)
+        if not LA_ACTIVE then return end
+        if v==folder or v:IsDescendantOf(folder) then return end
+        if _laSeen[v] then return end
+        _laClone(v,folder)
+        pcall(function()
+            local pos
+            if v:IsA("BasePart") then pos=v.Position
+            elseif v:IsA("Model") then
+                local ok4,cf=pcall(function() return v:GetPivot() end)
+                if ok4 and cf then pos=cf.Position end
+            end
+            _laAddPos(pos)
+        end)
+    end)
+
+    -- Clone scan loop (0.3s) — NO continue keyword
+    task.spawn(function()
+        local loopN=0; local cloned=0
+        while LA_ACTIVE do
+            loopN=loopN+1; local newN=0
+            for _,v in ipairs(workspace:GetDescendants()) do
+                if not LA_ACTIVE then break end
+                if not (v==folder or v:IsDescendantOf(folder) or _laSeen[v]) then
+                    if _laClone(v,folder) then
+                        cloned=cloned+1; newN=newN+1
+                    end
+                    pcall(function()
+                        local pos
+                        if v:IsA("BasePart") then pos=v.Position
+                        elseif v:IsA("Model") then
+                            local ok4,cf=pcall(function() return v:GetPivot() end)
+                            if ok4 and cf then pos=cf.Position end
+                        end
+                        _laAddPos(pos)
+                    end)
+                end
+            end
+            if newN>0 or loopN%10==0 then
+                local saved=0; pcall(function() saved=#folder:GetChildren() end)
+                local inst=countInst()
+                setStatus("🌍 Load ON 🟢 #"..loopN.." saved:"..saved.." inst:"..inst,TEAL)
+                _laUpdateUI("ON 🟢 #"..loopN.." ("..saved.."s "..inst.."i)",GREEN)
+                if newN>0 then
+                    addLog("🌍 #"..loopN.." +"..newN.." clone total="..cloned,TEAL)
+                    print("[Xinnz] 🌍 #"..loopN.." new="..newN.." total="..cloned)
+                end
+            end
+            for _=1,3 do if not LA_ACTIVE then break end; task.wait(0.1) end
+        end
+        print("[Xinnz] 🌍 Clone loop stopped")
+    end)
+end
+
+loadAllBtn.MouseButton1Click:Connect(function()
+    if LA_ACTIVE then stopLoadAll() else startLoadAll() end
+end)
+
+-- =====================================================
+-- UPLOAD CORE
+-- =====================================================
+local function doUploadOnce(service,fileContent,fileName)
+    local urlSafe=fileName:gsub("[^%w%.%-_]","_")
+    local boundary="XBound"..tostring(os.time())
+    local CRLF="\r\n"
+    local ok,resp
+
+    if service=="catbox.moe" then
+        local body="--"..boundary..CRLF..'Content-Disposition: form-data; name="reqtype"'..CRLF..CRLF.."fileupload"..CRLF
+            .."--"..boundary..CRLF..'Content-Disposition: form-data; name="fileToUpload"; filename="'..urlSafe..'"'..CRLF
+            .."Content-Type: application/octet-stream"..CRLF..CRLF..fileContent..CRLF.."--"..boundary.."--"..CRLF
+        ok,resp=httpReq({Url="https://catbox.moe/user/api.php",Method="POST",Headers={["Content-Type"]="multipart/form-data; boundary="..boundary},Body=body})
+        local b2=getRespBody(resp)
+        if not ok then return nil,"catbox error" end
+        if isHTMLResp(b2) then return nil,"catbox HTML — use RBXLX!" end
+        local url=b2:match("^%s*(https://files%.catbox%.moe/[^%s\r\n]+)") or b2:match("^%s*(https?://[^%s\r\n]+)")
+        if url then return url,nil end
+        return nil,"catbox: "..b2:sub(1,80)
+    end
+
+    if service=="litterbox" then
+        local body="--"..boundary..CRLF..'Content-Disposition: form-data; name="reqtype"'..CRLF..CRLF.."fileupload"..CRLF
+            .."--"..boundary..CRLF..'Content-Disposition: form-data; name="time"'..CRLF..CRLF.."72h"..CRLF
+            .."--"..boundary..CRLF..'Content-Disposition: form-data; name="fileToUpload"; filename="'..urlSafe..'"'..CRLF
+            .."Content-Type: application/octet-stream"..CRLF..CRLF..fileContent..CRLF.."--"..boundary.."--"..CRLF
+        ok,resp=httpReq({Url="https://litterbox.catbox.moe/resources/internals/api.php",Method="POST",Headers={["Content-Type"]="multipart/form-data; boundary="..boundary},Body=body})
+        local b2=getRespBody(resp)
+        if not ok then return nil,"litterbox error" end
+        if isHTMLResp(b2) then return nil,"litterbox HTML" end
+        local url=b2:match("^%s*(https?://[^%s\r\n]+)")
+        if url then return url,nil end
+        return nil,"litterbox: "..b2:sub(1,80)
+    end
+
+    if service=="filebin" then
+        local binId="xinnz"..tostring(game.PlaceId):sub(-6)..tostring(os.time()):sub(-4)
+        local upURL="https://filebin.net/"..binId.."/"..urlSafe
+        ok,resp=httpReq({Url=upURL,Method="POST",Headers={["Content-Type"]="application/octet-stream",["Accept"]="application/json"},Body=fileContent})
+        local b2=getRespBody(resp)
+        if not ok then return nil,"filebin error" end
+        if isHTMLResp(b2) then return nil,"filebin HTML" end
+        local sc=0; pcall(function() sc=tonumber(resp.StatusCode or resp.statusCode or 0) or 0 end)
+        if sc>=400 then return nil,"filebin HTTP "..sc end
+        return "https://filebin.net/"..binId.."/"..urlSafe,nil
+    end
+
+    return nil,"Unknown service"
+end
+
+local function doUploadSync(fileContent,fileName)
+    local order={CFG.UploadService}
+    for _,svc in ipairs(UPLOAD_SERVICES) do
+        local found=false
+        for _,s in ipairs(order) do if s==svc then found=true; break end end
+        if not found then table.insert(order,svc) end
+    end
+    print("[Xinnz] 📤 Order: "..table.concat(order," → ").." file:"..fileName.." "..#fileContent.."b")
+    if CFG.OutputFormat=="RBXL" then addLog("⚠️ RBXL binary — use RBXLX",YELLOW) end
+    for _,service in ipairs(order) do
+        addLog("📤 "..service.."...",TEAL); setStatus("📤 → "..service.."...",TEAL)
+        showToast("📤 Upload → "..service.."...",TEAL,5)
+        local link,err=doUploadOnce(service,fileContent,fileName)
+        if link then
+            addLog("✅ Upload OK ["..service.."]: "..link:sub(1,48),TEAL)
+            setStatus("☁️ Uploaded! "..link:sub(1,34),TEAL)
+            showToast("✅ Upload OK!\n"..link:sub(1,38),TEAL,6)
+            pcall(function()
+                local lf=DATA.."/saves/links.txt"; local ex=""
+                pcall(function() if isfile(lf) then ex=readfile(lf) end end)
+                writefile(lf,safeDate().." | "..fileName.." | "..service.." | "..link.."\n"..ex)
+            end)
+            return link,service
+        else
+            addLog("⚠️ "..service..": "..(err or "?"):sub(1,50),YELLOW)
+        end
+    end
+    addLog("❌ All uploads failed!",RED)
+    showToast("❌ Upload failed!\nUse RBXLX format",RED,5)
+    return nil,nil
+end
+
+-- =====================================================
+-- DISCORD WEBHOOK — RICH VERSION (fitur #20)
+-- =====================================================
+local function sendWebhook(data)
+    if not CFG.WebhookEnabled then return end
+    local url=CFG.WebhookURL or ""
+    if url=="" or not url:match("https://discord%.com/api/webhooks/") then
+        addLog("📡 Webhook URL invalid",RED); return
+    end
+
+    local gameName=getRealGameName()
+    local placeLink="https://www.roblox.com/games/"..tostring(game.PlaceId)
+    local thumb = data.thumbnail or (CFG.WebhookAvatar~="" and CFG.WebhookAvatar) or "https://www.roblox.com/Thumbs/GameIcon.ashx?universeId="..tostring(game.GameId)
+
+    local desc="**Game:** ["..gameName.."]("..placeLink..")\n**Status:** "
+        ..(data.success and "✅ Success" or "❌ Failed")
+    if data.uploadLink and data.uploadLink~="" then
+        desc=desc.."\n\n⬇️ **[DOWNLOAD FILE]("..data.uploadLink..")**\n`"..data.uploadLink.."`"
+    end
+
+    local dlVal=data.uploadLink and data.uploadLink~=""
+        and "[Click to Download]("..data.uploadLink..")"
+        or "_No upload_"
+
+    local fields={
+        {name="📦 Size",       value=data.size     or "N/A",    inline=true},
+        {name="🗜 Compressed", value=data.compressedSize or "N/A", inline=true},
+        {name="📊 Ratio",      value=data.ratio or "N/A",       inline=true},
+        {name="⏱ Duration",   value=data.duration  or "?",     inline=true},
+        {name="⚡ Speed",      value=data.speed     or "?",     inline=true},
+        {name="📄 Format",     value=CFG.OutputFormat,          inline=true},
+        {name="🏷️ Mode",      value=data.mode      or "?",     inline=true},
+        {name="📡 Trigger",    value=data.trigger   or "Manual",inline=true},
+        {name="🏗️ Instances", value=data.instances or "?",     inline=true},
+        {name="💾 Saved Inst", value=data.savedInstances or "0",inline=true},
+        {name="⬇️ Download",  value=dlVal,                     inline=false},
+    }
+
+    local payload={
+        username  ="Xinnz v1.2",
+        avatar_url=thumb,
+        embeds={{
+            title      =(data.success and "✅" or "❌").." ["..gameName.."] "..(data.mode or ""),
+            description=desc,
+            color      =data.success and 3066993 or 15158332,
+            fields     =fields,
+            thumbnail  ={url=thumb},
+            footer     ={text="Xinnz v1.2 · "..(data.date or safeDate()),icon_url=thumb},
+        }}
+    }
+
+    local ok,resp=httpReq({
+        Url=url, Method="POST",
+        Headers={["Content-Type"]="application/json"},
+        Body=HttpService:JSONEncode(payload),
+    })
+    if ok then
+        addLog("📡 Webhook ✅"..(data.uploadLink and " + link!" or ""),GREEN)
+    else
+        addLog("📡 Webhook FAILED: "..getRespBody(resp):sub(1,40),RED)
+    end
+end
+
+-- =====================================================
+-- CORE COPY — DENGAN PERBAIKAN USSI
+-- =====================================================
+local function runUSSI(decompile, ignorePlayer, saveTerrain)
+    -- Download library USSI dengan error handling
+    local ussi_url = "https://raw.githubusercontent.com/verysigmapro/UniversalSynSaveInstance-With-Save-Terrain/refs/heads/main/saveinstance.luau"
+    local ussi_code = nil
+    local success, err = pcall(function()
+        ussi_code = game:HttpGet(ussi_url, true)
+    end)
+    if not success or not ussi_code or ussi_code == "" then
+        addLog("❌ Gagal mengunduh library SaveInstance! Periksa koneksi internet.", RED)
+        error("USSI download failed")
+    end
+
+    local si = loadstring(ussi_code, "saveinstance")
+    if not si then
+        addLog("❌ Gagal memuat library SaveInstance (kode tidak valid).", RED)
+        error("USSI load failed")
+    end
+    si = si()  -- hasilnya adalah fungsi yang akan dipanggil
+
+    local baseName = applyTemplate(CFG.FilenameTemplate)
+    si({
+        FilePath = baseName,
+        Decompile = decompile,
+        ShowStatus = true,
+        RemovePlayerCharacters = ignorePlayer,
+        SaveTerrain = saveTerrain or false
+    })
+
+    task.wait(0.5)
+
+    -- Pencarian file hasil save
+    local rawBytes = 0; local rawContent = nil; local foundName = baseName
+
+    local function tryRead(name)
+        if rawBytes>0 or not name or name=="" then return end
+        pcall(function()
+            if isfile(name) then
+                local c=readfile(name)
+                if c and #c>200
+                    and not (c:sub(1,50):lower():match("<!doctype") or c:sub(1,50):lower():match("<html")) then
+                    rawContent=c; rawBytes=#c; foundName=name
+                    print("[Xinnz] ✅ File: "..name.." ("..rawBytes.."b)")
+                end
+            end
+        end)
+    end
+
+    tryRead(baseName)
+    if rawBytes==0 then
+        local stem=baseName:match("^(.-)%.[^%.]+$") or baseName
+        for _,ext in ipairs({".rbxlx",".rbxl",".rbxm"}) do tryRead(stem..ext); if rawBytes>0 then break end end
+    end
+    if rawBytes==0 then
+        task.wait(1.0); tryRead(baseName)
+        if rawBytes==0 then
+            local stem=baseName:match("^(.-)%.[^%.]+$") or baseName
+            for _,ext in ipairs({".rbxlx",".rbxl",".rbxm"}) do tryRead(stem..ext); if rawBytes>0 then break end end
+        end
+    end
+    if rawBytes==0 then
+        pcall(function()
+            local rf=listfiles("") or {}
+            for i=#rf,1,-1 do
+                local fp=rf[i]
+                if fp:match("%.rbxl[x]?$") or fp:match("%.rbxm$") then tryRead(fp); if rawBytes>0 then break end end
+            end
+        end)
+    end
+    if rawBytes==0 then
+        local an=cleanName()
+        for _,ext in ipairs({".rbxlx",".rbxl",".rbxm"}) do tryRead(an..ext); if rawBytes>0 then break end end
+    end
+    if rawBytes==0 then
+        task.wait(2.0)
+        tryRead(baseName)
+        if rawBytes==0 then
+            pcall(function()
+                for _,fp in ipairs(listfiles("") or {}) do
+                    if fp:match("%.rbxl[x]?$") or fp:match("%.rbxm$") then tryRead(fp); if rawBytes>0 then break end end
+                end
+            end)
+        end
+    end
+    if rawBytes==0 then addLog("⚠️ File not found after 6 passes!",RED) end
+
+    local dir=(CFG.SaveFolder~="" and CFG.SaveFolder) or DATA.."/saves"
+    if CFG.AutoOrganize then dir=dir.."/PlaceID_"..tostring(game.PlaceId) end
+    pcall(function() if not isfolder(dir) then makefolder(dir) end end)
+
+    local justFileName=foundName:match("([^/\\]+)$") or foundName
+    local finalPath=dir.."/"..justFileName
+
+    if CFG.DupCheck and isfile(finalPath) then
+        addLog("⚠️ Duplicate, skip.",YELLOW)
+        return finalPath,rawBytes,rawContent,justFileName
+    end
+    if rawContent and rawBytes>0 then
+        pcall(function() writefile(finalPath,rawContent); pcall(function() delfile(foundName) end) end)
+    end
+    return finalPath,rawBytes,rawContent,justFileName
+end
+
+-- =====================================================
+-- doCopy
+-- =====================================================
+doCopy=function(mode,trigger)
+    if isCopying then
+        addLog("⚠️ Still processing!",YELLOW); showToast("⚠️ Still copying...",YELLOW); return
+    end
+    isCopying=true
+
+    local decompile  =(mode=="script") or (mode=="terrain_script")
+    local saveTerrain=(mode=="terrain") or (mode=="terrain_script")
+    local modeLabel
+    if     mode=="script"         then modeLabel="WITH Script"
+    elseif mode=="terrain"        then modeLabel="WITH Terrain"
+    elseif mode=="terrain_script" then modeLabel="Terrain + Script"
+    else                               modeLabel="WITHOUT Script"
+    end
+    local trigLabel=trigger or "Manual"
+
+    setStatus("⏳ "..modeLabel.."...",YELLOW)
+    addLog("⏳ "..modeLabel.." ["..trigLabel.."]",YELLOW)
+    setProgress(8); startTimer(); showSpd("")
+
+    print("[Xinnz] ▶️ COPY "..modeLabel.." game:"..getRealGameName())
+
+    local instBefore=countInst(); local speedClock=tick()
+
+    task.spawn(function()
+        local success=false; local filePath=""
+        local sizeBytes=0; local savedContent=nil
+
+        for attempt=1,CFG.RetryAttempts do
+            setStatus(string.format("⏳ [%d/%d] %s",attempt,CFG.RetryAttempts,modeLabel),YELLOW)
+            setProgress(8+(attempt-1)*math.floor(55/CFG.RetryAttempts))
+            addLog("Attempt "..attempt.."/"..CFG.RetryAttempts.."...",DIM)
+            local ok,r1,r2,r3=pcall(runUSSI,decompile,ignoreState,saveTerrain)
+            if ok then
+                success=true; filePath=tostring(r1 or "")
+                sizeBytes=tonumber(r2) or 0; savedContent=r3
+                print("[Xinnz] ✅ Copy OK! "..sizeBytes.."b")
+                break
+            else
+                addLog("❌ Attempt "..attempt..": "..tostring(r1):sub(1,55),RED)
+                logError("Attempt "..attempt,tostring(r1))
+                task.wait(2)
+            end
+        end
+
+        setProgress(65)
+        local elapsed=stopTimer()
+        local durStr=fmtTime(elapsed)
+        local speedStr="~"..tostring(math.floor(instBefore/math.max(tick()-speedClock,0.1))).." inst/s"
+        showSpd("⚡ "..speedStr); task.delay(6,function() showSpd("") end)
+
+        if success and sizeBytes==0 and filePath~="" then
+            pcall(function()
+                if isfile(filePath) then
+                    local c=readfile(filePath); if c and #c>0 then sizeBytes=#c; savedContent=c end
+                end
+            end)
+        end
+
+        local sizeStr  =sizeBytes>0 and fmtBytes(sizeBytes) or "Unknown"
+        local sizeMBStr=sizeBytes>0 and fmtMB(sizeBytes) or "Unknown"
+
+        local ns=addStat(success,success and sizeBytes or 0)
+        refreshStats()
+        pcall(function()
+            statVals.success.Text=tostring(ns.success or 0)
+            statVals.fail.Text=tostring(ns.fail or 0)
+            statVals.totalSize.Text=fmtBytes(ns.totalBytes or 0)
+        end)
+
+        if success then
+            setStatus("✅ Copy! "..sizeStr.." · "..durStr,GREEN)
+            addLog("✅ "..sizeStr.." · "..durStr.." · "..speedStr,GREEN)
+            showToast("✅ Copy! "..sizeStr.." · "..durStr,GREEN)
+            playSound(1.4)
+
+            local uploadLink=nil; local uploadService=nil
+            if CFG.AutoUpload then
+                setProgress(72); addLog("☁️ Upload...",TEAL); setStatus("📤 Uploading...",TEAL)
+                local fileContent=savedContent
+                if not fileContent or #fileContent==0 then
+                    pcall(function()
+                        if filePath~="" and isfile(filePath) then fileContent=readfile(filePath) end
+                    end)
+                end
+                local gname=_realGameName or getRealGameName()
+                local cleanGame=gname:gsub("[^%w%s%-%.%(%)%[%]]",""):gsub("%s+","_"):gsub("_+","_")
+                if cleanGame:match("^_") then cleanGame=cleanGame:sub(2) end
+                if cleanGame:match("_$") then cleanGame=cleanGame:sub(1,-2) end
+                if cleanGame=="" then cleanGame="Game_"..tostring(game.PlaceId) end
+                cleanGame=cleanGame:sub(1,50)
+                local ext2=({RBXL=".rbxl",RBXLX=".rbxlx",RBXM=".rbxm"})[CFG.OutputFormat] or ".rbxlx"
+                local ds=""; pcall(function() ds="_"..os.date("%Y%m%d_%H%M%S") end)
+                local fileName=cleanGame..ds..ext2
+                if fileContent and #fileContent>100 then
+                    uploadLink,uploadService=doUploadSync(fileContent,fileName)
+                    if uploadLink then playSound(1.5) end
+                else addLog("⚠️ Content empty, upload skipped",YELLOW) end
+            end
+
+            setProgress(88)
+
+            local savedInst=0
+            if LA_ACTIVE then pcall(function() savedInst=#_laGetFolder():GetChildren() end) end
+
+            pushHistory({gameName=getRealGameName(),placeId=tostring(game.PlaceId),
+                mode=modeLabel,format=CFG.OutputFormat,date=safeDate(),
+                duration=durStr,size=sizeStr,speed=speedStr,success=true,trigger=trigLabel,
+                uploadLink=uploadLink,uploadService=uploadService})
+
+            if CFG.WebhookEnabled then
+                setStatus("📡 Webhook...",DIM)
+                sendWebhook({
+                    success=true,
+                    mode=modeLabel,
+                    size=sizeStr.." ("..sizeMBStr..")",
+                    compressedSize="N/A",
+                    ratio="N/A",
+                    duration=durStr,
+                    speed=speedStr,
+                    date=safeDate(),
+                    trigger=trigLabel,
+                    uploadLink=uploadLink,
+                    uploadService=uploadService,
+                    instances=tostring(instBefore),
+                    savedInstances=tostring(savedInst),
+                    thumbnail=CFG.WebhookAvatar
+                })
+            end
+
+            setProgress(100)
+            if uploadLink then
+                setStatus("✅ Done + Uploaded! ["..tostring(uploadService).."]",TEAL)
+                addLog("🔗 "..tostring(uploadLink):sub(1,52),TEAL)
+            else setStatus("✅ Done! "..sizeStr.." · "..durStr,GREEN) end
+
+        else
+            setStatus("❌ Failed! "..durStr,RED)
+            addLog("❌ Failed! Check errors/",RED)
+            showToast("❌ Copy failed!",RED,4); playSound(0.6)
+            pushHistory({gameName=getRealGameName(),placeId=tostring(game.PlaceId),
+                mode=modeLabel,format=CFG.OutputFormat,date=safeDate(),
+                duration=durStr,size="N/A",speed=speedStr,success=false,trigger=trigLabel})
+            if CFG.WebhookEnabled then
+                sendWebhook({
+                    success=false,
+                    mode=modeLabel,
+                    size="N/A",
+                    compressedSize="N/A",
+                    ratio="N/A",
+                    duration=durStr,
+                    speed=speedStr,
+                    date=safeDate(),
+                    trigger=trigLabel,
+                    instances=tostring(instBefore),
+                    savedInstances="0"
+                })
+            end
+            setProgress(100)
+        end
+
+        task.wait(4); setProgress(0); isCopying=false
+    end)
+end
+
+-- =====================================================
+-- CHAT COMMAND
+-- =====================================================
+pcall(function()
+    LocalPlayer.Chatted:Connect(function(msg)
+        if not chatCmdEnabled then return end
+        local lower=msg:lower():match("^%s*(.-)%s*$") or ""
+        if     lower=="/xinnz copy"    then showToast("💬 Copy",BLUE,2);      doCopy("noscript","Chat")
+        elseif lower=="/xinnz script"  then showToast("💬 Script",GREEN,2);   doCopy("script","Chat")
+        elseif lower=="/xinnz terrain" then showToast("💬 Terrain",ORANGE,2); doCopy("terrain","Chat")
+        elseif lower=="/xinnz ts" or lower=="/xinnz terrainscript" then
+            showToast("💬 Terrain+Script",TEAL,2); doCopy("terrain_script","Chat")
+        elseif lower=="/xinnz loadall" then
+            if LA_ACTIVE then stopLoadAll() else startLoadAll() end
+        elseif lower=="/xinnz status"  then
+            showToast("📊 "..(isCopying and "⏳ Copying..." or "✅ Ready")..(LA_ACTIVE and " | 🌍 ON" or ""),ACCENT,3)
+        elseif lower=="/xinnz help"    then
+            showToast("copy|script|terrain|ts|loadall|status|help",PURPLE,5)
+        end
+    end)
+end)
+
+-- =====================================================
+-- PLAYER TRIGGER
+-- =====================================================
+task.spawn(function()
+    local lastTrig=0; local COOL=300
+    while true do
+        task.wait(15)
+        if CFG.PlayerTrigger then
+            local count=#Players:GetPlayers()
+            local thresh=math.max(CFG.PlayerTriggerCount or 3,1)
+            local now=tick()
+            if count<=thresh and (now-lastTrig)>=COOL then
+                lastTrig=now
+                addLog("👥 Trigger! "..count.."p",YELLOW)
+                showToast("👥 Auto-copy! "..count.."p",YELLOW,3)
+                doCopy(CFG.PlayerTriggerMode or "noscript","Player Trigger ("..count.."p)")
+            end
+        end
+    end
+end)
+
+-- Auto-backup scheduler
+local function startScheduler()
+    if schedulerRunning then return end
+    schedulerRunning=true
+    task.spawn(function()
+        while schedulerRunning and CFG.BackupEnabled do
+            task.wait(math.max((CFG.BackupInterval or 10),1)*60)
+            if schedulerRunning and CFG.BackupEnabled then
+                addLog("⏰ Auto-backup!",YELLOW); showToast("⏰ Auto-backup...",YELLOW)
+                doCopy("noscript","Backup Scheduler")
+            end
+        end
+        schedulerRunning=false
+    end)
+end
+
+-- =====================================================
+-- DISCORD COMMAND BRIDGE SCHEDULER
+-- =====================================================
+local function processDiscordCommand()
+    if not CFG.DiscordCmdEnabled then return end
+    local cmdFile = CFG.DiscordCmdFile or DATA.."/discord_cmd.txt"
+    local respFile = CFG.DiscordRespFile or DATA.."/discord_resp.txt"
+    if not isfile(cmdFile) then return end
+    local cmd = readfile(cmdFile):gsub("^%s*(.-)%s*$", "")
+    if cmd == "" then return end
+    pcall(function() delfile(cmdFile) end)
+
+    local response = ""
+    local function respond(msg)
+        response = msg
+        writefile(respFile, response)
+        addLog("🤖 Discord command: "..cmd.." → "..msg:sub(1,50), TEAL)
+    end
+
+    if cmd:lower() == "status" then
+        local stats = loadStats()
+        local laStatus = LA_ACTIVE and "ON 🟢" or "OFF 🔴"
+        local copyStatus = isCopying and "⏳ Copying..." or "✅ Idle"
+        respond(string.format("**Status**\n- Copy: %s\n- Load All: %s\n- Success: %d\n- Fail: %d\n- Total Size: %s",
+            copyStatus, laStatus, stats.success or 0, stats.fail or 0, fmtBytes(stats.totalBytes or 0)))
+    elseif cmd:lower():match("^copy") then
+        local mode = cmd:match("copy%s+(%w+)") or "noscript"
+        local validModes = {noscript=true, script=true, terrain=true, terrain_script=true}
+        if not validModes[mode] then
+            respond("❌ Mode tidak dikenal. Gunakan: noscript, script, terrain, terrain_script")
+        else
+            if isCopying then
+                respond("⚠️ Script sedang sibuk, coba lagi nanti.")
+            else
+                respond("⏳ Memulai copy mode: "..mode.."...")
+                task.spawn(function()
+                    doCopy(mode, "Discord Command")
+                    respond("✅ Copy selesai! Cek history untuk detail.")
+                end)
+            end
+        end
+    elseif cmd:lower() == "upload_last" then
+        local hist = loadHistory()
+        local last = nil
+        for _, e in ipairs(hist) do
+            if e.success and e.uploadLink == nil then
+                last = e
+                break
+            end
+        end
+        if not last then
+            respond("❌ Tidak ada file baru yang berhasil dicopy.")
+        else
+            local fileName = nil
+            local dir = (CFG.SaveFolder ~= "" and CFG.SaveFolder) or DATA.."/saves"
+            if CFG.AutoOrganize then dir = dir.."/PlaceID_"..tostring(game.PlaceId) end
+            pcall(function()
+                if isfolder(dir) then
+                    local files = listfiles(dir) or {}
+                    for _, fp in ipairs(files) do
+                        if fp:match("%.rbxlx?$") or fp:match("%.rbxm$") then
+                            fileName = fp
+                        end
+                    end
+                end
+            end)
+            if not fileName then
+                respond("❌ File tidak ditemukan.")
+            else
+                local content = nil
+                pcall(function() if isfile(fileName) then content = readfile(fileName) end end)
+                if content and #content > 100 then
+                    local gname = getRealGameName()
+                    local cleanGame = gname:gsub("[^%w%s%-%.%(%)%[%]]",""):gsub("%s+","_"):gsub("_+","_")
+                    local ext = ({RBXL=".rbxl", RBXLX=".rbxlx", RBXM=".rbxm"})[CFG.OutputFormat] or ".rbxlx"
+                    local uploadName = cleanGame.."_"..os.date("%Y%m%d_%H%M%S")..ext
+                    task.spawn(function()
+                        local link, svc = doUploadSync(content, uploadName)
+                        if link then
+                            respond("✅ Upload berhasil! ["..svc.."] "..link)
+                        else
+                            respond("❌ Upload gagal.")
+                        end
+                    end)
+                else
+                    respond("❌ File kosong atau tidak terbaca.")
+                end
+            end
+        end
+    elseif cmd:lower() == "list_files" then
+        local dir = (CFG.SaveFolder ~= "" and CFG.SaveFolder) or DATA.."/saves"
+        if CFG.AutoOrganize then dir = dir.."/PlaceID_"..tostring(game.PlaceId) end
+        local files = {}
+        pcall(function()
+            if isfolder(dir) then
+                for _, fp in ipairs(listfiles(dir) or {}) do
+                    local fname = fp:match("([^/\\]+)$") or fp
+                    table.insert(files, fname)
+                end
+            end
+        end)
+        if #files == 0 then
+            respond("📭 Tidak ada file di folder save.")
+        else
+            local list = "📁 **File Terakhir:**\n"
+            for i = 1, math.min(10, #files) do
+                list = list .. "• " .. files[i] .. "\n"
+            end
+            if #files > 10 then list = list .. "... dan " .. (#files - 10) .. " file lainnya." end
+            respond(list)
+        end
+    elseif cmd:lower() == "help" then
+        respond("**Perintah yang tersedia:**\n`status`\n`copy [noscript|script|terrain|terrain_script]`\n`upload_last`\n`list_files`\n`help`")
+    else
+        respond("❌ Perintah tidak dikenal. Ketik `help` untuk daftar.")
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(10)
+        pcall(processDiscordCommand)
+    end
+end)
+
+-- =====================================================
+-- WATCHDOG
+-- =====================================================
+task.spawn(function()
+    while true do
+        task.wait(15)
+        local alive=pcall(function() assert(sg.Parent~=nil); assert(mf.Parent~=nil) end)
+        if not alive then
+            local ok=pcall(function() sg.Parent=PlayerGui end)
+            if not ok then pcall(function() sg.Parent=game:GetService("CoreGui") end) end
+            addLog("⚠️ Watchdog repair",YELLOW)
+        end
+    end
+end)
+
+-- =====================================================
+-- INIT
+-- =====================================================
+setVisible(true); switchTab(1)
+
+addLog("Xinnz v1.2 FINAL ✅",ACCENT)
+addLog("🔧 USSI download dengan error handling",GREEN)
+addLog("🔧 Discord Command Bridge aktif",GREEN)
+addLog("📦 Export/Import Preset — share your settings!",PURPLE)
+addLog("🌍 Load All: Heartbeat 60fps keep-alive",TEAL)
+addLog("🖱️ GUI resize — drag bottom-right corner",ACCENT)
+addLog("🔊 Sound notifications active",ACCENT)
+addLog("☁️ "..table.concat(UPLOAD_SERVICES," → "),TEAL)
+addLog("📡 Webhook: "..(CFG.WebhookEnabled and "ON" or "OFF").." (Rich fields)",CFG.WebhookEnabled and GREEN or DIM)
+addLog("🤖 Discord Command Bridge: "..(CFG.DiscordCmdEnabled and "ON" or "OFF"), CFG.DiscordCmdEnabled and GREEN or DIM)
+setStatus("✅ Ready — v1.2",GREEN)
+playSound(1.0)
+
+print("========================================")
+print("[Xinnz] ✅ Xinnz v1.2 LOADED!")
+print("[Xinnz]    Game   : "..getRealGameName())
+print("[Xinnz]    Format : "..CFG.OutputFormat)
+print("[Xinnz]    Upload : "..tostring(CFG.AutoUpload).." ["..CFG.UploadService.."]")
+print("[Xinnz]    Webhook: "..tostring(CFG.WebhookEnabled).." (Rich fields)")
+print("[Xinnz]    Preset : Export/Import via Settings tab")
+print("[Xinnz]    Discord Cmd : "..tostring(CFG.DiscordCmdEnabled))
+print("[Xinnz]    Load All folder: workspace."..LA_FOLDER)
+print("[Xinnz] /xinnz [copy|script|terrain|ts|loadall|status|help]")
+print("========================================")
+
+if CFG.BackupEnabled then
+    startScheduler()
+    addLog("⏰ Backup scheduler active",YELLOW)
+end
