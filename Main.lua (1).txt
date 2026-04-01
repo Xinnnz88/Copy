@@ -5,6 +5,7 @@
     ✅ Discord Command Bridge (kontrol dari file)
     ✅ Export/Import Preset
     ✅ Tidak ada error "call a nil value"
+    ✅ Perbaikan format RBXM: hanya menyimpan terrain (map)
 ]]
 
 local doCopy
@@ -1591,7 +1592,7 @@ local function sendWebhook(data)
 end
 
 -- =====================================================
--- CORE COPY — DENGAN PERBAIKAN USSI
+-- CORE COPY — DENGAN PERBAIKAN USSI & FORMAT RBXM
 -- =====================================================
 local function runUSSI(decompile, ignorePlayer, saveTerrain)
     -- Download library USSI dengan error handling
@@ -1613,13 +1614,24 @@ local function runUSSI(decompile, ignorePlayer, saveTerrain)
     si = si()  -- hasilnya adalah fungsi yang akan dipanggil
 
     local baseName = applyTemplate(CFG.FilenameTemplate)
-    si({
+    local options = {
         FilePath = baseName,
         Decompile = decompile,
         ShowStatus = true,
         RemovePlayerCharacters = ignorePlayer,
         SaveTerrain = saveTerrain or false
-    })
+    }
+    
+    -- 📦 PERBAIKAN: jika format RBXM, hanya simpan terrain (map) saja
+    if CFG.OutputFormat == "RBXM" then
+        addLog("📦 Format RBXM: hanya menyimpan terrain (map) saja", TEAL)
+        options.SaveTerrainOnly = true   -- instruksi ke USSI untuk hanya menyimpan terrain
+        options.Decompile = false        -- tidak perlu decompile script
+        options.SaveTerrain = true       -- pastikan terrain disimpan
+        options.SaveInstances = false    -- matikan penyimpanan instance lain
+    end
+    
+    si(options)
 
     task.wait(0.5)
 
